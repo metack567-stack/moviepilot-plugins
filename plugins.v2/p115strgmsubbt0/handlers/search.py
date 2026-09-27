@@ -3,6 +3,7 @@
 负责所有搜索相关逻辑：HDHive、Nullbr、PanSou、TG频道
 """
 import os
+import re
 from typing import Optional, List, Dict, Any
 
 from app.core.config import settings
@@ -910,18 +911,38 @@ class SearchHandler:
             logger.warning("bt0 客户端未初始化，跳过 bt0 查询")
             return []
 
-        # 降级关键词策略
-        if media_type == MediaType.MOVIE:
-            search_keywords = [
-                f"{mediainfo.title} {mediainfo.year}",
-                mediainfo.title
-            ]
+        year = str(mediainfo.year) if getattr(mediainfo, "year", None) else ""
+
+        # ---- 1) 精确匹配优先：标题+年份 -> 该影片全部磁力（避免同名/同系列错配）----
+        resolved = self._bt0_client.resolve(mediainfo.title, year)
+        if resolved.get("matched"):
+            movie = resolved.get("movie") or {}
+            magnets = resolved.get("magnets") or []
+            results = []
+            for item in magnets:
+                magnet = (item.get("magnet") or "").strip()
+                if not magnet:
+                    continue
+                results.append({
+                    "url": magnet,
+                    "title": item.get("title", "") or movie.get("title", "") or mediainfo.title,
+                    "update_time": item.get("published_at", ""),
+                    "source": "bt0",
+                    "is_magnet": True,
+                    "detail_url": item.get("detail_url", ""),
+                })
+            if results:
+                logger.info(f"bt0 精确匹配命中：{movie.get('title')}（{movie.get('years')}），返回 {len(results)} 条磁力")
+                return results
+            logger.info(f"bt0 精确匹配命中但无磁力详情（{movie.get('title')}），降级模糊搜索")
         else:
-            search_keywords = [
-                f"{mediainfo.title} {season}",
-                f"{mediainfo.title}{season}",
-                mediainfo.title
-            ]
+            logger.info(f"bt0 精确匹配未命中（{mediainfo.title} {year}），降级模糊搜索")
+
+        # ---- 2) 降级：模糊搜索 + 电视剧剔除 + 年份校验 + 标题匹配优先 ----
+        if media_type == MediaType.MOVIE:
+            search_keywords = [f"{mediainfo.title} {mediainfo.year}", mediainfo.title]
+        else:
+            search_keywords = [f"{mediainfo.title} {season}", f"{mediainfo.title}{season}", mediainfo.title]
 
         for keyword in search_keywords:
             logger.info(f"使用 bt0 搜索资源: {mediainfo.title}，关键词: '{keyword}'")
@@ -931,26 +952,43 @@ class SearchHandler:
                 logger.info(f"bt0 关键词 '{keyword}' 无结果，尝试下一个降级关键词")
                 continue
 
-            # 过滤有磁力链接的条目
             results = []
             for item in items:
                 magnet = (item.get("magnet") or "").strip()
                 if not magnet:
                     continue
+                title = (item.get("title") or "").strip()
+                # 电视剧剔除：电影订阅不要剧集/合集磁力
+                if media_type == MediaType.MOVIE:
+                    cat = (item.get("category") or "").strip()
+                    if any(k in cat for k in ("剧", "电视", "剧集")):
+                        continue
+                # 年份校验：标题含年份但非订阅年份 -> 剔除（防错配）
+                if year:
+                    ym = re.search(r"(19|20)\d{2}", title)
+                    if ym and year not in title:
+                        continue
                 results.append({
                     "url": magnet,
-                    "title": item.get("title", "") or mediainfo.title,
+                    "title": title or mediainfo.title,
                     "update_time": item.get("published_at", ""),
                     "source": "bt0",
                     "is_magnet": True,
-                    "detail_url": item.get("detail_url", "")
+                    "detail_url": item.get("detail_url", ""),
                 })
 
             if results:
+                # 标题含订阅关键词（含原名/别名）的排前（软排序，不剔除）
+                def _bt0_score(r: dict) -> int:
+                    t = self._bt0_client._compact_for_match(r["title"])
+                    k = self._bt0_client._compact_for_match(mediainfo.title)
+                    return 0 if (k and k in t) else 1
+                results.sort(key=_bt0_score)
                 logger.info(f"bt0 关键词 '{keyword}' 搜索到 {len(results)} 条磁力资源")
                 return results
             else:
-                logger.info(f"bt0 关键词 '{keyword}' 有 {len(items)} 条结果但磁力详情未抓取（等待 2bt0-hub 详情同步），尝试下一个关键词")
+                logger.info(f"bt0 关键词 '{keyword}' 有 {len(items)} 条结果但磁力详情未抓取或过滤后为空，尝试下一个关键词")
 
         logger.info(f"bt0 未找到资源")
         return []
+
