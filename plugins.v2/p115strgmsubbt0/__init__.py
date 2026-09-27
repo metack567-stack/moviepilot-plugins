@@ -2547,22 +2547,13 @@ class P115StrgmSubBt0(_PluginBase):
         return self._api_handler.clear_history(apikey)
 
     def api_apply_filter_rules(self) -> dict:
-        """API: 手动应用MP过滤规则，返回日志摘要"""
-        from io import StringIO
-        import logging
-        log_capture = StringIO()
-        handler = logging.StreamHandler(log_capture)
-        handler.setFormatter(logging.Formatter('%(message)s'))
-        logger.logger.addHandler(handler)
+        """API: 手动应用MP过滤规则"""
         try:
             self._register_filter_rules()
-            logger.info("✅ 手动应用过滤规则完成")
-        finally:
-            logger.logger.removeHandler(handler)
-        return {
-            "success": True,
-            "message": log_capture.getvalue()
-        }
+            return {"success": True, "message": "过滤规则应用完成"}
+        except Exception as e:
+            logger.error(f"手动应用过滤规则失败: {e}")
+            return {"success": False, "message": f"失败: {e}"}
 
     def _batch_re_score(self) -> dict:
         """
