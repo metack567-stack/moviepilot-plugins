@@ -3,6 +3,7 @@
 负责核心的同步逻辑：处理电影订阅、处理电视剧订阅
 """
 import datetime
+import re
 from typing import List, Dict, Any, Set, Optional, Callable
 import json
 import os
@@ -142,6 +143,67 @@ class SyncHandler:
         except Exception as e:
             logger.error(f"提交 115 离线下载异常：{e}")
             return False
+
+    def _extract_info_hash(self, magnet: str) -> str:
+        """从磁力链接提取 info_hash（btih），用于回查 115 离线任务状态"""
+        if not magnet:
+            return ""
+        m = re.search(r"urn:btih:([A-Fa-f0-9]+)", magnet)
+        return m.group(1).lower() if m else ""
+
+    def refresh_offline_history(self, history: List[dict]) -> int:
+        """回查 115 离线任务状态：把提交超过 30 分钟的「离线中」条目更新为 成功/失败。
+
+        复用 p115strmhelper 的离线缓存（get_cached_data），缓存新鲜时零新增 115 请求。
+
+        :param history: 历史记录列表
+        :return: 更新条数
+        """
+        try:
+            from app.plugins.p115strmhelper.service import servicer
+            if not servicer or not getattr(servicer, "offlinehelper", None):
+                logger.info("bt0 离线回查：p115strmhelper 离线服务不可用，跳过")
+                return 0
+        except Exception as e:
+            logger.warning(f"bt0 离线回查：p115strmhelper 服务不可用，跳过：{e}")
+            return 0
+
+        now = datetime.datetime.now()
+        pending = []
+        for h in history:
+            if h.get("status") != "离线中" or not h.get("info_hash"):
+                continue
+            try:
+                ts = datetime.datetime.strptime(h.get("time", ""), "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                continue
+            if (now - ts).total_seconds() >= 1800:  # 提交超过 30 分钟才回查
+                pending.append(h)
+
+        if not pending:
+            return 0
+
+        updated = 0
+        try:
+            # 读 p115strmhelper 离线缓存（120 秒窗口内不触发 115 请求）
+            tasks = servicer.offlinehelper.get_cached_data()
+            status_map = {t.info_hash: t.status for t in tasks}
+            for h in pending:
+                st = status_map.get(h["info_hash"])
+                if st == 2:  # 下载成功
+                    h["status"] = "成功"
+                    updated += 1
+                    logger.info(f"bt0 离线回查：{h.get('title')} → 成功")
+                elif st == 1:  # 下载失败
+                    h["status"] = "失败"
+                    updated += 1
+                    logger.info(f"bt0 离线回查：{h.get('title')} → 失败")
+        except Exception as e:
+            logger.warning(f"bt0 离线回查异常：{e}")
+
+        if updated:
+            logger.info(f"bt0 离线回查完成：更新 {updated} 条状态")
+        return updated
 
     def process_movie_subscribe(
         self,
@@ -293,6 +355,7 @@ class SyncHandler:
                         "type": "电影",
                         "status": "离线中" if ok else "失败",
                         "share_url": share_url,
+                        "info_hash": self._extract_info_hash(share_url),
                         "file_name": resource_title,
                         "source": "bt0",
                         "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -755,6 +818,7 @@ class SyncHandler:
                             "episode": 0,
                             "status": "离线中" if ok else "失败",
                             "share_url": share_url,
+                            "info_hash": self._extract_info_hash(share_url),
                             "file_name": resource_title,
                             "source": "bt0",
                             "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

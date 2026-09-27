@@ -2470,6 +2470,11 @@ class P115StrgmSubBt0(_PluginBase):
             return True
 
         history: List[dict] = self.get_data('history') or []
+        # bt0 离线回查：把 115 已完成/失败的离线任务状态更新回 history（读缓存，零新增 115 请求）
+        try:
+            self._sync_handler.refresh_offline_history(history)
+        except Exception as e:
+            logger.warning(f"bt0 离线回查失败：{e}")
         transfer_details: List[Dict[str, Any]] = []
         transferred_count = 0
 
