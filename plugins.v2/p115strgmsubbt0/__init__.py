@@ -2393,13 +2393,13 @@ class P115StrgmSubBt0(_PluginBase):
 
     def _do_sync(self) -> bool:
         # 至少启用一个搜索源
-        if not self._pansou_enabled and not self._hdhive_enabled and not self._tg_enabled:
-            logger.error("搜索源均未启用（PanSou/HDHive/TG），无法执行")
+        if not self._pansou_enabled and not self._hdhive_enabled and not self._tg_enabled and not self._bt0_enabled:
+            logger.error("搜索源均未启用（PanSou/HDHive/TG/Bt0），无法执行")
             if self._notify:
                 self.post_message(
                     mtype=NotificationType.Plugin,
                     title="【115网盘订阅追更】配置错误",
-                    text="PanSou、HDHive、TG 均未启用，请至少启用一个搜索源。"
+                    text="PanSou、HDHive、TG、Bt0 均未启用，请至少启用一个搜索源。"
                 )
             return False
 

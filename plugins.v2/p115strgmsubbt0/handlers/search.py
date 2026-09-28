@@ -942,12 +942,40 @@ class SearchHandler:
         if media_type == MediaType.MOVIE:
             search_keywords = [f"{mediainfo.title} {mediainfo.year}", mediainfo.title]
         else:
-            search_keywords = [f"{mediainfo.title} {season}", f"{mediainfo.title}{season}", mediainfo.title]
+            try:
+                _snum = int(season or 1)
+            except (TypeError, ValueError):
+                _snum = 0
+            search_keywords = [
+                f"{mediainfo.title} S{_snum:02d}",
+                f"{mediainfo.title} S{_snum}",
+                f"{mediainfo.title} {_snum}",
+                f"{mediainfo.title}{_snum}",
+                f"第{_snum}季",
+                mediainfo.title,
+            ]
 
         for keyword in search_keywords:
             logger.info(f"使用 bt0 搜索资源: {mediainfo.title}，关键词: '{keyword}'")
             bt0_section = 1 if media_type == MediaType.MOVIE else 2
-            items = self._bt0_client.search(keyword, section=bt0_section)
+            items = []
+            for _page in range(1, 4):
+                page_items = self._bt0_client.search(keyword, page=_page, section=bt0_section)
+                if not page_items:
+                    break
+                items.extend(page_items)
+                if len(page_items) < 20:
+                    break
+            seen_ids = set()
+            dedup = []
+            for it in items:
+                _id = it.get("id")
+                if _id is not None:
+                    if _id in seen_ids:
+                        continue
+                    seen_ids.add(_id)
+                dedup.append(it)
+            items = dedup
             if not items:
                 logger.info(f"bt0 关键词 '{keyword}' 无结果，尝试下一个降级关键词")
                 continue
