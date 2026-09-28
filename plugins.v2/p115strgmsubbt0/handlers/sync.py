@@ -140,8 +140,14 @@ class SyncHandler:
             else:
                 logger.error(f"bt0 磁力提交 115 离线下载失败：{title}")
             return bool(ok)
+        except ImportError as e:
+            logger.error(
+                f"未找到 p115strmhelper 插件（{e}），bt0 磁力无法提交 115 离线下载："
+                f"请确认已安装并启用「115网盘STRM助手」插件"
+            )
+            return False
         except Exception as e:
-            logger.error(f"提交 115 离线下载异常：{e}")
+            logger.error(f"提交 115 离线下载异常：{e}（请检查「115网盘STRM助手」插件运行状态）")
             return False
 
     def _extract_info_hash(self, magnet: str) -> str:

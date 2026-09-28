@@ -864,7 +864,7 @@ class UIConfig:
             "tg_channel_ids": "",
             "tg_forward_enabled": False,
             "tg_forward_target": "",
-            "bt0_enabled": False,
+            "bt0_enabled": True,
             "bt0_url": "http://192.168.8.219:8000",
             "search_source_order": [],
             "subscribe_filter_mode": "exclude",

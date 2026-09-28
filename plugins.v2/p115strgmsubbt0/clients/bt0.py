@@ -2,6 +2,8 @@
 bt0 磁力搜索客户端
 调用本地 2bt0-hub（resource-hub）API 搜索磁力资源，作为 115 网盘搜索的兜底源
 """
+import time
+
 import requests
 from typing import List, Dict
 
@@ -17,6 +19,21 @@ class BTOClient:
         # 1=电影 2=电视剧（对应 2bt0-hub 板块）
         self._section = section
 
+    def _get(self, url: str, params: dict):
+        """GET 请求，带 2 次重试（本地服务偶发重启/繁忙时避免漏搜）"""
+        last_exc = None
+        for attempt in range(3):
+            try:
+                resp = requests.get(url, params=params, timeout=self._timeout)
+                resp.raise_for_status()
+                return resp
+            except Exception as e:
+                last_exc = e
+                logger.warning(f"bt0 请求失败（第 {attempt + 1}/3 次）：{e}")
+                if attempt < 2:
+                    time.sleep(0.5)
+        raise last_exc
+
     def search(self, keyword: str, page: int = 1, section: int = None) -> List[Dict]:
         """
         搜索磁力资源
@@ -28,12 +45,10 @@ class BTOClient:
         """
         try:
             sc = section if section is not None else self._section
-            resp = requests.get(
+            resp = self._get(
                 f"{self._base_url}/api/items",
-                params={"source": "local", "q": keyword, "sc": sc, "page": page},
-                timeout=self._timeout
+                {"source": "local", "q": keyword, "sc": sc, "page": page}
             )
-            resp.raise_for_status()
             data = resp.json()
             items = data.get("items") or []
             logger.info(f"bt0 搜索 '{keyword}' 返回 {len(items)} 条")
@@ -53,12 +68,10 @@ class BTOClient:
         :return: {"matched": bool, "movie": {...}|None, "magnets": [...]}
         """
         try:
-            resp = requests.get(
+            resp = self._get(
                 f"{self._base_url}/api/resolve",
-                params={"q": keyword, "year": year},
-                timeout=self._timeout
+                {"q": keyword, "year": year}
             )
-            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"bt0 resolve 失败: {e}")

@@ -116,7 +116,7 @@ class P115StrgmSubBt0(_PluginBase):
     _tg_enabled: bool = False
     _tg_bot_token: str = ""
     # bt0 磁力库（2bt0-hub 兜底搜索源）配置
-    _bt0_enabled: bool = False
+    _bt0_enabled: bool = True
     _bt0_url: str = "http://192.168.8.219:8000"
     _tg_channel_ids: str = ""
 
@@ -1124,7 +1124,7 @@ class P115StrgmSubBt0(_PluginBase):
             self._tg_channel_ids = config.get("tg_channel_ids", "")
 
             # bt0 磁力库配置
-            self._bt0_enabled = config.get("bt0_enabled", False)
+            self._bt0_enabled = config.get("bt0_enabled", True)
             self._bt0_url = config.get("bt0_url", "http://192.168.8.219:8000") or "http://192.168.8.219:8000"
 
             # TG 自动转发配置
