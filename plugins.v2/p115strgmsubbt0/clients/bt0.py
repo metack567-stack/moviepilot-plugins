@@ -123,13 +123,17 @@ class BTOClient:
     # ---- 剧集信息解析（供电视剧精准匹配使用）----
     _EP_FULL_RE = __import__("re").compile(r"[\[\【]\s*全\s*(\d+)\s*集\s*[\]\】]")
     _EP_RANGE_RE = __import__("re").compile(r"[\[\【]\s*第\s*(\d{1,4})\s*(?:[-~到]\s*(\d{1,4}))?\s*集\s*[\]\】]")
+    _EP_SE_RE = __import__("re").compile(r"[S＄](\d{1,2})\s*[EＥ](\d{1,3})(?:\s*[-~]\s*[EＥ]?(\d{1,3}))?", __import__("re").IGNORECASE)
+    _EP_E_RE = __import__("re").compile(r"(?<![A-Za-z0-9])[EＥ](\d{1,3})(?![A-Za-z0-9])")
 
     @staticmethod
     def parse_episodes(title: str, movie_episodes: str = "") -> List[int]:
-        """从磁力标题解析覆盖集数：[全N集] -> 1..N；[第X-Y集] -> X..Y；[第N集] -> N。
+        """从磁力标题解析覆盖集数（按优先级）：
 
-        无标题标记时用影片总集数（movie_episodes，如 2bt0 resolve 返回的 movie.episodes）兜底；
-        都拿不到返回空列表（表示未知，调用方按无剧集信息处理）。
+        1) [全N集] -> 1..N；2) [第X-Y集] -> X..Y；3) [第N集] -> N；
+        4) SxxEyy 或 SxxEyy-Ezz -> 季内集号；5) Eyy -> 集号。
+        以上都没有时，才用影片总集数（movie_episodes）兜底——避免欧美剧单集磁力
+        （如 S01E03）被错误当作全集参与择优；都拿不到返回空列表。
         """
         if title:
             m = BTOClient._EP_FULL_RE.search(title)
@@ -143,6 +147,17 @@ class BTOClient:
                 if 0 < a <= b:
                     return list(range(a, b + 1))
                 return []
+            m = BTOClient._EP_SE_RE.search(title)
+            if m:
+                a = int(m.group(2))
+                b = int(m.group(3)) if m.group(3) else a
+                if 0 < a <= b:
+                    return list(range(a, b + 1))
+                return []
+            m = BTOClient._EP_E_RE.search(title)
+            if m:
+                n = int(m.group(1))
+                return [n] if n > 0 else []
         if movie_episodes:
             try:
                 n = int(str(movie_episodes).strip())
