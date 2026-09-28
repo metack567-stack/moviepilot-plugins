@@ -817,6 +817,24 @@ class SyncHandler:
 
                     # bt0 磁力源：提交 115 离线下载（借道 p115strmhelper），等待离线完成后入库
                     if resource.get("is_magnet") or str(share_url).startswith("magnet:"):
+                        # 收集本搜索源返回的全部磁力候选，按覆盖缺失集最多的择优提交（电视剧精准匹配）
+                        magnet_candidates = [
+                            r for r in p115_results
+                            if r.get("is_magnet") or str(r.get("url", "")).startswith("magnet:")
+                        ]
+                        best = None
+                        best_score = (-1, -1)
+                        for cand in magnet_candidates:
+                            cand_eps = cand.get("episodes") or []
+                            hit = [e for e in cand_eps if e in missing_episodes]
+                            score = (len(hit), len(cand_eps))
+                            if score > best_score:
+                                best_score = score
+                                best = cand
+                        if best is None:
+                            continue
+                        share_url = best.get("url", "")
+                        resource_title = best.get("title", "")
                         ok = self._submit_offline_download(share_url, resource_title)
                         history_item = {
                             "title": mediainfo.title,
@@ -832,7 +850,7 @@ class SyncHandler:
                         history.append(history_item)
                         if ok:
                             transferred_count += 1
-                            logger.info(f"已提交 bt0 磁力到 115 离线下载：{resource_title}")
+                            logger.info(f"已提交 bt0 磁力到 115 离线下载：{resource_title}（覆盖 {len(best.get('episodes') or [])} 集，缺失 {best_score[0]} 集）")
                         else:
                             logger.error(f"bt0 磁力提交离线失败：{resource_title}")
                         break

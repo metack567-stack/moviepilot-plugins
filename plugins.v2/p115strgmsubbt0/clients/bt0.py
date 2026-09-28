@@ -120,3 +120,36 @@ class BTOClient:
             return False
         return ck in ct
 
+    # ---- 剧集信息解析（供电视剧精准匹配使用）----
+    _EP_FULL_RE = __import__("re").compile(r"[\[\【]\s*全\s*(\d+)\s*集\s*[\]\】]")
+    _EP_RANGE_RE = __import__("re").compile(r"[\[\【]\s*第\s*(\d{1,4})\s*(?:[-~到]\s*(\d{1,4}))?\s*集\s*[\]\】]")
+
+    @staticmethod
+    def parse_episodes(title: str, movie_episodes: str = "") -> List[int]:
+        """从磁力标题解析覆盖集数：[全N集] -> 1..N；[第X-Y集] -> X..Y；[第N集] -> N。
+
+        无标题标记时用影片总集数（movie_episodes，如 2bt0 resolve 返回的 movie.episodes）兜底；
+        都拿不到返回空列表（表示未知，调用方按无剧集信息处理）。
+        """
+        if title:
+            m = BTOClient._EP_FULL_RE.search(title)
+            if m:
+                n = int(m.group(1))
+                return list(range(1, n + 1)) if n > 0 else []
+            m = BTOClient._EP_RANGE_RE.search(title)
+            if m:
+                a = int(m.group(1))
+                b = int(m.group(2)) if m.group(2) else a
+                if 0 < a <= b:
+                    return list(range(a, b + 1))
+                return []
+        if movie_episodes:
+            try:
+                n = int(str(movie_episodes).strip())
+                if n > 0:
+                    return list(range(1, n + 1))
+            except (TypeError, ValueError):
+                pass
+        return []
+
+

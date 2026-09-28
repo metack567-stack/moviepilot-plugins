@@ -930,6 +930,7 @@ class SearchHandler:
                     "source": "bt0",
                     "is_magnet": True,
                     "detail_url": item.get("detail_url", ""),
+                    "episodes": self._bt0_client.parse_episodes(item.get("title", ""), movie.get("episodes", "")),
                 })
             if results:
                 logger.info(f"bt0 精确匹配命中：{movie.get('title')}（{movie.get('years')}），返回 {len(results)} 条磁力")
@@ -1003,6 +1004,7 @@ class SearchHandler:
                     "source": "bt0",
                     "is_magnet": True,
                     "detail_url": item.get("detail_url", ""),
+                    "episodes": self._bt0_client.parse_episodes(title, item.get("episodes", "")),
                 })
 
             if results:
