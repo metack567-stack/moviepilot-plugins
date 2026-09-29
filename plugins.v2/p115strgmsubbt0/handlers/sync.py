@@ -200,6 +200,8 @@ class SyncHandler:
                     h["status"] = "成功"
                     updated += 1
                     logger.info(f"bt0 离线回查：{h.get('title')} → 成功")
+                    # 离线成功后补完成订阅（电影/剧集通用，见 _try_finish_offline_subscribe）
+                    self._try_finish_offline_subscribe(h)
                 elif st == 1:  # 下载失败
                     h["status"] = "失败"
                     updated += 1
@@ -210,6 +212,59 @@ class SyncHandler:
         if updated:
             logger.info(f"bt0 离线回查完成：更新 {updated} 条状态")
         return updated
+
+    def _try_finish_offline_subscribe(self, h: dict) -> None:
+        """bt0 离线成功后，若存在对应订阅，尝试完成订阅（电影/剧集通用）。
+
+        背景：bt0 磁力路径只提交 115 离线下载，离线完成后没有回调完成订阅，
+        导致电影订阅 lack_episode 永不归零、订阅一直卡在运行中（7 天后还会
+        重复提交同一磁力）。这里在离线回查「成功」时补调 check_and_finish_subscribe。
+        """
+        try:
+            from app.db.subscribe_oper import SubscribeOper
+            subs = SubscribeOper().list() or []
+            candidates = [s for s in subs if s.name == h.get("title")]
+            if not candidates:
+                logger.debug(f"bt0 离线成功，未找到对应订阅：{h.get('title')}")
+                return
+            for subscribe in candidates:
+                # 只处理运行中的订阅
+                if getattr(subscribe, "state", "R") != "R":
+                    logger.debug(f"bt0 离线成功，订阅 {subscribe.name} 非运行中，跳过")
+                    continue
+                media_type = h.get("type", "")
+                if media_type == "电影":
+                    meta = MetaInfo(subscribe.name)
+                    meta.year = subscribe.year
+                    meta.type = MediaType.MOVIE
+                    success_episodes = [1]
+                else:
+                    meta = MetaInfo(subscribe.name)
+                    meta.year = subscribe.year
+                    meta.begin_season = subscribe.season or None
+                    meta.type = MediaType.TV
+                    success_episodes = h.get("episodes") or []
+                    if not success_episodes:
+                        logger.debug(f"bt0 离线成功，剧集 {subscribe.name} 无集数信息，跳过完成")
+                        continue
+                mediainfo = self._chain.recognize_media(
+                    meta=meta,
+                    mtype=meta.type,
+                    tmdbid=subscribe.tmdbid,
+                    doubanid=subscribe.doubanid,
+                    cache=True
+                )
+                if not mediainfo:
+                    logger.warning(f"bt0 离线成功，无法识别媒体信息：{subscribe.name}")
+                    continue
+                self._subscribe_handler.check_and_finish_subscribe(
+                    subscribe=subscribe,
+                    mediainfo=mediainfo,
+                    success_episodes=success_episodes
+                )
+                logger.info(f"bt0 离线成功后补完成订阅：{subscribe.name}（{media_type}，集数 {success_episodes}）")
+        except Exception as e:
+            logger.warning(f"bt0 离线成功后补完成订阅异常：{e}")
 
     def process_movie_subscribe(
         self,
