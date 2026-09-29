@@ -117,7 +117,7 @@ class UIConfig:
                                      'model': 'cron',
                                      'label': '执行周期（Cron）',
                                      'placeholder': '30 2,10,18 * * *',
-                                     'hint': '5段 Cron：分 时 日 月 周；例：2,10,18 * * * 表示2点、10点、18点的30分执行',
+                                     'hint': '5段 Cron：分 时 日 月 周；例：30 2,10,18 * * * 表示2点、10点、18点的30分执行',
                                      'persistent-hint': True,
                                      'clearable': True
                                  }
@@ -199,13 +199,15 @@ class UIConfig:
                                                     'items': [
                                                         {'title': 'PanSou (盘搜)', 'value': 'pansou'},
                                                         {'title': 'HDHive (影巢)', 'value': 'hdhive'},
-                                                        {'title': 'TG 频道/群', 'value': 'tg'}
+                                                        {'title': 'TG 频道/群', 'value': 'tg'},
+                                                        {'title': 'bt0 磁力库', 'value': 'bt0'},
+                                                        {'title': 'NullBr', 'value': 'nullbr'}
                                                     ],
                                                     'multiple': True,
                                                     'chips': True,
                                                     'clearable': True,
                                                     'closable-chips': True,
-                                                    'hint': '按选择的先后顺序依次搜索，前面的源搜到结果就不再查询后面的；留空使用默认优先级 HDHive > PanSou；未选入的已启用源会自动排在末尾',
+                                                    'hint': '按选择的先后顺序依次搜索，前面的源搜到结果就不再查询后面的；留空使用默认优先级 HDHive > PanSou > bt0；未选入的已启用源会自动排在末尾',
                                                     'persistent-hint': True
                                                 }
                                             }]
@@ -871,7 +873,6 @@ class UIConfig:
             "exclude_subscribes": [],
             "include_subscribes": [],
             "block_system_subscribe": False,
-            "auto_best_version": False,
             "block_start_time": "18:00",
             "block_end_time": "23:59",
             "unblock_start_time": "00:00",
@@ -1125,6 +1126,22 @@ class UIConfig:
         movie_history = [h for h in sorted_history if h.get("type") == "电影"][:50]
         tv_history = [h for h in sorted_history if h.get("type") != "电影"][:50]
 
+        def _fmt_episodes(eps: list) -> str:
+            """压缩连续集数：1,2,3,6 -> 1-3、6"""
+            eps = sorted(set(int(e) for e in eps if e))
+            if not eps:
+                return "0 集"
+            parts = []
+            start = prev = eps[0]
+            for e in eps[1:]:
+                if e == prev + 1:
+                    prev = e
+                    continue
+                parts.append(f"{start}-{prev}" if start != prev else f"{start}")
+                start = prev = e
+            parts.append(f"{start}-{prev}" if start != prev else f"{start}")
+            return "、".join(parts)
+
         def build_history_item(h: dict) -> dict:
             status = h.get("status", "")
             media_type = h.get("type", "")
@@ -1138,8 +1155,15 @@ class UIConfig:
                 title_text = f'{h.get("title", "")} ({h.get("year", "")})'
             else:
                 season = h.get("season", 0) or 0
-                episode = h.get("episode", 0) or 0
-                title_text = f'{h.get("title", "")} S{season:02d}E{episode:02d}'
+                episodes = h.get("episodes") or []
+                if episodes:
+                    title_text = f'{h.get("title", "")} S{season:02d} · 覆盖 {_fmt_episodes(episodes)}'
+                else:
+                    episode = h.get("episode", 0) or 0
+                    if episode:
+                        title_text = f'{h.get("title", "")} S{season:02d}E{episode:02d}'
+                    else:
+                        title_text = f'{h.get("title", "")} S{season:02d}'
 
             content_items = [
                 {

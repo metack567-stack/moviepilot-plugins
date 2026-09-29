@@ -840,6 +840,8 @@ class SyncHandler:
                             "title": mediainfo.title,
                             "season": season,
                             "episode": 0,
+                            "episodes": best.get("episodes") or [],
+                            "missing_count": best_score[0],
                             "status": "离线中" if ok else "失败",
                             "share_url": share_url,
                             "info_hash": self._extract_info_hash(share_url),
