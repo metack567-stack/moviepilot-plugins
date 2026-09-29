@@ -197,11 +197,14 @@ class SyncHandler:
             for h in pending:
                 st = status_map.get(h["info_hash"])
                 if st == 2:  # 下载成功
-                    h["status"] = "成功"
-                    updated += 1
-                    logger.info(f"bt0 离线回查：{h.get('title')} → 成功")
-                    # 离线成功后补完成订阅（电影/剧集通用，见 _try_finish_offline_subscribe）
-                    self._try_finish_offline_subscribe(h)
+                    # 以「媒体库入库」为完成标准：离线成功且入库后才完成订阅
+                    ingested = self._try_finish_offline_subscribe(h)
+                    if ingested:
+                        h["status"] = "成功"
+                        updated += 1
+                        logger.info(f"bt0 离线回查：{h.get('title')} → 成功（媒体库已入库）")
+                    else:
+                        logger.info(f"bt0 离线回查：{h.get('title')} 离线已完成但媒体库未收录，保持等待，下次回查再确认")
                 elif st == 1:  # 下载失败
                     h["status"] = "失败"
                     updated += 1
@@ -213,20 +216,26 @@ class SyncHandler:
             logger.info(f"bt0 离线回查完成：更新 {updated} 条状态")
         return updated
 
-    def _try_finish_offline_subscribe(self, h: dict) -> None:
-        """bt0 离线成功后，若存在对应订阅，尝试完成订阅（电影/剧集通用）。
+    def _try_finish_offline_subscribe(self, h: dict) -> bool:
+        """bt0 离线成功后，确认「媒体库已入库」才完成订阅（电影/剧集通用）。
 
-        背景：bt0 磁力路径只提交 115 离线下载，离线完成后没有回调完成订阅，
-        导致电影订阅 lack_episode 永不归零、订阅一直卡在运行中（7 天后还会
-        重复提交同一磁力）。这里在离线回查「成功」时补调 check_and_finish_subscribe。
+        以入库为完成标准：离线下载成功只代表文件进了 115 云盘，入库（strm 生成 +
+        Emby 收录）由 115助手网盘整理完成，两者有先后。这里先查媒体库确认入库，
+        入库才补调 check_and_finish_subscribe；未入库返回 False，调用方保持
+        「离线中」状态，下次回查再确认（7 天去重在此期间持续生效，不会重复提交）。
+
+        :param h: bt0 离线历史条目
+        :return: True=已入库（或无需处理）；False=尚未入库，等待下次回查
         """
         try:
             from app.db.subscribe_oper import SubscribeOper
+            from app.chain.download import DownloadChain
             subs = SubscribeOper().list() or []
             candidates = [s for s in subs if s.name == h.get("title")]
             if not candidates:
                 logger.debug(f"bt0 离线成功，未找到对应订阅：{h.get('title')}")
-                return
+                return True
+            all_ingested = True
             for subscribe in candidates:
                 # 只处理运行中的订阅
                 if getattr(subscribe, "state", "R") != "R":
@@ -237,16 +246,13 @@ class SyncHandler:
                     meta = MetaInfo(subscribe.name)
                     meta.year = subscribe.year
                     meta.type = MediaType.MOVIE
-                    success_episodes = [1]
+                    totals = {}
                 else:
                     meta = MetaInfo(subscribe.name)
                     meta.year = subscribe.year
                     meta.begin_season = subscribe.season or None
                     meta.type = MediaType.TV
-                    success_episodes = h.get("episodes") or []
-                    if not success_episodes:
-                        logger.debug(f"bt0 离线成功，剧集 {subscribe.name} 无集数信息，跳过完成")
-                        continue
+                    totals = {subscribe.season or 1: subscribe.total_episode or 0}
                 mediainfo = self._chain.recognize_media(
                     meta=meta,
                     mtype=meta.type,
@@ -256,15 +262,60 @@ class SyncHandler:
                 )
                 if not mediainfo:
                     logger.warning(f"bt0 离线成功，无法识别媒体信息：{subscribe.name}")
+                    all_ingested = False
                     continue
+                # 入库判定：查媒体库（电影=存在；剧集=该磁力覆盖的集均已入库）
+                exist_flag, no_exists = DownloadChain().get_no_exists_info(
+                    meta=meta,
+                    mediainfo=mediainfo,
+                    totals=totals
+                )
+                if not self._is_offline_ingested(media_type, h, no_exists, exist_flag, subscribe):
+                    logger.info(f"bt0 离线成功但 {subscribe.name} 媒体库未收录，等待入库后完成")
+                    all_ingested = False
+                    continue
+                # 已入库：计算集数并完成订阅
+                if media_type == "电影":
+                    success_episodes = [1]
+                else:
+                    eps = h.get("episodes") or []
+                    if eps:
+                        success_episodes = eps
+                    else:
+                        start_ep = subscribe.start_episode or 1
+                        total_ep = subscribe.total_episode or 0
+                        success_episodes = list(range(start_ep, total_ep + 1)) if total_ep > 0 else []
                 self._subscribe_handler.check_and_finish_subscribe(
                     subscribe=subscribe,
                     mediainfo=mediainfo,
                     success_episodes=success_episodes
                 )
                 logger.info(f"bt0 离线成功后补完成订阅：{subscribe.name}（{media_type}，集数 {success_episodes}）")
+            return all_ingested
         except Exception as e:
             logger.warning(f"bt0 离线成功后补完成订阅异常：{e}")
+            return False
+
+    def _is_offline_ingested(self, media_type: str, h: dict, no_exists: dict,
+                             exist_flag: bool, subscribe) -> bool:
+        """判断该 bt0 离线条目是否已真正入库：
+        电影=媒体库中存在；剧集=该磁力覆盖的集都已在媒体库。
+        """
+        if media_type == "电影":
+            return exist_flag
+        # 剧集：按该磁力覆盖的集数判定
+        eps = h.get("episodes") or []
+        if not eps:
+            return exist_flag
+        season = subscribe.season or 1
+        missing = set()
+        for seasons in no_exists.values():
+            info = seasons.get(season)
+            if info and getattr(info, "episodes", None):
+                missing.update(info.episodes)
+        expected = set(range(subscribe.start_episode or 1, (subscribe.total_episode or 0) + 1))
+        existing = expected - missing
+        return set(eps) <= existing
 
     def process_movie_subscribe(
         self,
