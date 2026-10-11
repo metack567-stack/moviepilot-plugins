@@ -3,7 +3,7 @@
     "name": "115网盘追更·Bt0磁力版",
     "description": "结合MoviePilot订阅功能，自动搜索115网盘资源并转存缺失的电影和剧集（内置bt0磁力搜索源）。",
     "labels": "下载,115",
-    "version": "1.7.6",
+    "version": "1.7.7",
     "author": "metack567-stack",
     "level": 1,
     "v2": true,
@@ -11,7 +11,8 @@
     "release": true,
     "history": {
       "v1.7.5": "- 修复 MP V3 兼容：Subscribe 已无 tmdbid/doubanid 字段，改用 media_source+media_id（新增 utils/v3_compat.py，替换全部老字段访问）\n- 修复 SubscribeOper().list_by_tmdbid 在 V3 被移除导致的 AttributeError（改本地过滤）",
-      "v1.7.6": "- 修复 V3 的 recognize_media 签名变化（不再接受 tmdbid/doubanid，改用 media_source+media_id）"
+      "v1.7.6": "- 修复 V3 的 recognize_media 签名变化（不再接受 tmdbid/doubanid，改用 media_source+media_id）",
+      "v1.7.7": "- bt0 精确匹配改用新版 2bt0-hub 通用接口（/api/items?source=local + /api/movie/{id}），不再依赖已移除的 /api/resolve 本地补丁"
     }
   }
 }

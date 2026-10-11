@@ -56,23 +56,96 @@ class BTOClient:
         except Exception as e:
             logger.error(f"bt0 搜索失败: {e}")
             return []
+    def _local_items(self, params: dict, max_pages: int = 3) -> List[Dict]:
+        """调用 2bt0-hub 本地库接口（新版 /api/items，source=local）并翻页汇总"""
+        out: List[Dict] = []
+        page = 1
+        while page <= max_pages:
+            p = dict(params)
+            p.update({"source": "local", "page": page})
+            resp = self._get(f"{self._base_url}/api/items", p)
+            data = resp.json() or {}
+            batch = data.get("items") or []
+            out.extend(batch)
+            total_pages = int(data.get("total_pages") or 1)
+            if not batch or page >= min(total_pages, max_pages):
+                break
+            page += 1
+        return out
+
+    def _movie_detail(self, idcode: str) -> Dict:
+        """取影片详情（含 years / episodes），用于精确匹配校验"""
+        try:
+            resp = self._get(f"{self._base_url}/api/movie/{idcode}", {})
+            return ((resp.json() or {}).get("movie")) or {}
+        except Exception as e:
+            logger.warning(f"bt0 影片详情获取失败（{idcode}）：{e}")
+            return {}
+
     def resolve(self, keyword: str, year: str = "") -> Dict:
         """
         精确匹配：按标题+年份解析影片，返回该影片全部磁力
 
-        调用 2bt0-hub /api/resolve（movies 表 title/otitle/alias + years 匹配
-        -> movies.idcode -> magnets.movie_id），避免同名/同系列错配。
+        新版 2bt0-hub 已移除 /api/resolve（该接口原为本地补丁），改为组合使用
+        通用接口：/api/items?source=local&q=<标题> 找候选影片
+        -> /api/movie/{idcode} 校验标题/年份 -> /api/items?source=local&movie_id=<idcode> 取全部磁力。
+        未命中返回 matched=False，调用方降级模糊搜索。
 
         :param keyword: 影片标题
         :param year: 年份（可空）
         :return: {"matched": bool, "movie": {...}|None, "magnets": [...]}
         """
+        kw = (keyword or "").strip()
+        if not kw:
+            return {"matched": False, "movie": None, "magnets": []}
         try:
-            resp = self._get(
-                f"{self._base_url}/api/resolve",
-                {"q": keyword, "year": year}
-            )
-            return resp.json()
+            items = self._local_items({"q": kw, "sc": self._section}, max_pages=3)
+            groups: Dict[str, Dict] = {}
+            for it in items:
+                extra = it.get("extra") or {}
+                if not isinstance(extra, dict):
+                    continue
+                mid = str(extra.get("movie_id") or "")
+                if not mid:
+                    continue
+                g = groups.setdefault(mid, {"title": extra.get("movie_title") or "", "magnets": []})
+                g["magnets"].append(it)
+            if not groups:
+                return {"matched": False, "movie": None, "magnets": []}
+
+            nk, ck = self._normalize_for_match(kw), self._compact_for_match(kw)
+            cands = []
+            for mid, g in groups.items():
+                title = g["title"] or ""
+                if not title:
+                    continue
+                if self._normalize_for_match(title) == nk or self._compact_for_match(title) == ck:
+                    score = 3
+                elif self._title_matches_search_key(kw, title) or self._title_matches_search_key(title, kw):
+                    score = 2
+                else:
+                    continue
+                cands.append((score, mid, g))
+            if not cands:
+                return {"matched": False, "movie": None, "magnets": []}
+            cands.sort(key=lambda x: (-x[0], x[1]))
+
+            y = (year or "").strip()
+            for _score, mid, g in cands[:3]:
+                movie = self._movie_detail(mid) or {"idcode": mid, "title": g["title"]}
+                if y:
+                    my = str(movie.get("years") or "").strip()
+                    if not (my == y or my.startswith(y)):
+                        continue
+                magnets = self._local_items({"movie_id": mid, "sc": self._section}, max_pages=3)
+                if not magnets:
+                    magnets = g["magnets"]
+                logger.info(
+                    f"bt0 精确匹配（本地库）：{movie.get('title')}（{movie.get('years')}）"
+                    f"-> {len(magnets)} 条磁力"
+                )
+                return {"matched": True, "movie": movie, "magnets": magnets}
+            return {"matched": False, "movie": None, "magnets": []}
         except Exception as e:
             logger.error(f"bt0 resolve 失败: {e}")
             return {"matched": False, "movie": None, "magnets": []}
