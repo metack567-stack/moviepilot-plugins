@@ -139,12 +139,19 @@ class SyncHandler:
             if ok:
                 logger.info(f"bt0 磁力已提交 115 离线下载：{title}（新增 {count} 个任务）")
                 return True
-            # 115 对「已存在」的离线任务会拒收，且文案是 errcode 10004「错误的链接」，
-            # 这并不代表失败：先确认该 info_hash 是否已在离线任务列表里（可能已下载完成），
-            # 在的话按「已提交」记录，交给 refresh_offline_history 回查状态、入库后完成订阅。
-            status = self._query_offline_status(self._extract_info_hash(magnet))
-            if status is not None:
-                logger.info(f"bt0 磁力已在 115 离线任务中（status={status}），按已提交处理：{title}")
+            # 115 对「已存在」的离线任务会拒收，文案是 errcode 10004「错误的链接」。
+            # 先确认该 info_hash 是否已在离线任务列表里。
+            task = self._find_offline_task(self._extract_info_hash(magnet))
+            if task is not None:
+                # ⚠️ 任务在列表 ≠ 文件还在：115 会保留「下载成功」但文件已被清掉的坏任务。
+                #    （2026-10-11 实测：status=2/percentDone=100，file_id 在网盘查不到。）
+                #    这种必须判失败，否则每轮都空等「离线完成」，永远不会去换资源。
+                if task.get("status") == 2 and self._offline_file_missing(task.get("file_id")):
+                    logger.error(f"bt0 磁力在 115 有任务但文件已丢失（坏任务，需换资源）：{title}")
+                    return False
+                logger.info(
+                    f"bt0 磁力已在 115 离线任务中（status={task.get('status')}），按已提交处理：{title}"
+                )
                 return True
             logger.error(f"bt0 磁力提交 115 离线下载失败：{title}")
             return False
@@ -166,11 +173,11 @@ class SyncHandler:
         return m.group(1).lower() if m else ""
 
     @staticmethod
-    def _query_offline_status(info_hash: str):
-        """查 115 离线任务列表里该 info_hash 的状态：0/1/2/3=在列表，None=不在列表
+    def _find_offline_task(info_hash: str):
+        """按 info_hash 在 115 离线任务列表里找原始任务 dict（含 status/file_id），找不到返回 None。
 
-        只在「提交被拒」这条异常路径上调用，用来区分「115 拒收重复任务」和「真失败」。
-        status 语义（115）：0 进行中、1 下载失败、2 下载成功、3 重试中。
+        status 语义（115，2026-10-11 实测）：0/1/3 = 进行中或重试中（刚提交时就是 1，
+        不是失败！）、2 = 下载成功、-1 = 失败。别把 1 当失败。
         """
         if not info_hash:
             return None
@@ -184,10 +191,38 @@ class SyncHandler:
         try:
             for item in helper.get_tasks():
                 if str(item.get("info_hash", "")).lower() == info_hash.lower():
-                    return int(item.get("status", -1))
+                    return item
         except Exception as e:
-            logger.warning(f"bt0 离线任务存在性检查失败：{e}")
+            logger.warning(f"bt0 离线任务查询失败：{e}")
         return None
+
+    @staticmethod
+    def _offline_file_missing(file_id) -> bool:
+        """115 离线任务对应的文件是否已不在网盘（坏任务）。
+
+        判据（用「好/坏/新」三个 id 对照验证过）：把 file_id 当目录列内容，
+        正常文件夹回读条目的 cid == file_id；文件已被清掉时 115 会回落到根目录，cid 对不上。
+        """
+        fid = str(file_id or "").strip()
+        if not fid:
+            return False
+        try:
+            from app.plugins.p115strmhelper.service import servicer
+        except ImportError:
+            return False
+        helper = getattr(servicer, "offlinehelper", None) if servicer else None
+        client = getattr(helper, "client", None) if helper else None
+        if client is None:
+            return False
+        try:
+            resp = client.fs_files({"cid": fid, "limit": 5, "offset": 0, "show_dir": 1})
+            items = (resp or {}).get("data") or []
+            if not items:
+                return True
+            return not any(str(it.get("cid") or "") == fid for it in items)
+        except Exception as e:
+            logger.warning(f"bt0 离线文件存在性检查失败（file_id={fid}）：{e}")
+            return False
 
     def refresh_offline_history(self, history: List[dict]) -> int:
         """回查 115 离线任务状态：把提交超过 30 分钟的「离线中」条目更新为 成功/失败。
@@ -228,6 +263,11 @@ class SyncHandler:
             status_map = {t.info_hash: t.status for t in tasks}
             for h in pending:
                 st = status_map.get(h["info_hash"])
+                try:
+                    _ts = datetime.datetime.strptime(h.get("time", ""), "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    _ts = now
+                overdue = (now - _ts).total_seconds() >= 86400
                 if st == 2:  # 下载成功
                     # 以「媒体库入库」为完成标准：离线成功且入库后才完成订阅
                     ingested = self._try_finish_offline_subscribe(h)
@@ -236,11 +276,37 @@ class SyncHandler:
                         updated += 1
                         logger.info(f"bt0 离线回查：{h.get('title')} → 成功（媒体库已入库）")
                     else:
-                        logger.info(f"bt0 离线回查：{h.get('title')} 离线已完成但媒体库未收录，保持等待，下次回查再确认")
-                elif st == 1:  # 下载失败
+                        # 115 会留下「下载成功但文件已被清掉」的坏任务：任务还在列表、status=2，
+                        # 但 file_id 在网盘里查不到 ⇒ 永远等不到入库，必须判失败去换资源。
+                        task = self._find_offline_task(h.get("info_hash") or "")
+                        if task is not None and self._offline_file_missing(task.get("file_id")):
+                            h["status"] = "失败"
+                            updated += 1
+                            logger.error(
+                                f"bt0 离线回查：{h.get('title')} → 失败（115 任务在但文件已丢失，需换资源）"
+                            )
+                        elif overdue:
+                            h["status"] = "失败"
+                            updated += 1
+                            logger.error(
+                                f"bt0 离线回查：{h.get('title')} → 失败（离线完成超 24 小时仍未入库，放弃等待）"
+                            )
+                        else:
+                            logger.info(f"bt0 离线回查：{h.get('title')} 离线已完成但媒体库未收录，保持等待，下次回查再确认")
+                elif st == -1:  # 115 明确失败
                     h["status"] = "失败"
                     updated += 1
-                    logger.info(f"bt0 离线回查：{h.get('title')} → 失败")
+                    logger.info(f"bt0 离线回查：{h.get('title')} → 失败（115 报下载失败）")
+                else:
+                    # 0/1/3/None：进行中、重试中或查不到。⚠️ 1 是「刚提交/进行中」，不是失败。
+                    if overdue:
+                        h["status"] = "失败"
+                        updated += 1
+                        logger.error(
+                            f"bt0 离线回查：{h.get('title')} → 失败（离线超 24 小时未完成，放弃等待）"
+                        )
+                    else:
+                        logger.info(f"bt0 离线回查：{h.get('title')} 仍在离线中（status={st}），继续等待")
         except Exception as e:
             logger.warning(f"bt0 离线回查异常：{e}")
 
