@@ -138,9 +138,16 @@ class SyncHandler:
             ok, count = servicer.offlinehelper.add_urls_to_transfer([magnet])
             if ok:
                 logger.info(f"bt0 磁力已提交 115 离线下载：{title}（新增 {count} 个任务）")
-            else:
-                logger.error(f"bt0 磁力提交 115 离线下载失败：{title}")
-            return bool(ok)
+                return True
+            # 115 对「已存在」的离线任务会拒收，且文案是 errcode 10004「错误的链接」，
+            # 这并不代表失败：先确认该 info_hash 是否已在离线任务列表里（可能已下载完成），
+            # 在的话按「已提交」记录，交给 refresh_offline_history 回查状态、入库后完成订阅。
+            status = self._query_offline_status(self._extract_info_hash(magnet))
+            if status is not None:
+                logger.info(f"bt0 磁力已在 115 离线任务中（status={status}），按已提交处理：{title}")
+                return True
+            logger.error(f"bt0 磁力提交 115 离线下载失败：{title}")
+            return False
         except ImportError as e:
             logger.error(
                 f"未找到 p115strmhelper 插件（{e}），bt0 磁力无法提交 115 离线下载："
@@ -157,6 +164,30 @@ class SyncHandler:
             return ""
         m = re.search(r"urn:btih:([A-Fa-f0-9]+)", magnet)
         return m.group(1).lower() if m else ""
+
+    @staticmethod
+    def _query_offline_status(info_hash: str):
+        """查 115 离线任务列表里该 info_hash 的状态：0/1/2/3=在列表，None=不在列表
+
+        只在「提交被拒」这条异常路径上调用，用来区分「115 拒收重复任务」和「真失败」。
+        status 语义（115）：0 进行中、1 下载失败、2 下载成功、3 重试中。
+        """
+        if not info_hash:
+            return None
+        try:
+            from app.plugins.p115strmhelper.service import servicer
+        except ImportError:
+            return None
+        helper = getattr(servicer, "offlinehelper", None) if servicer else None
+        if not helper:
+            return None
+        try:
+            for item in helper.get_tasks():
+                if str(item.get("info_hash", "")).lower() == info_hash.lower():
+                    return int(item.get("status", -1))
+        except Exception as e:
+            logger.warning(f"bt0 离线任务存在性检查失败：{e}")
+        return None
 
     def refresh_offline_history(self, history: List[dict]) -> int:
         """回查 115 离线任务状态：把提交超过 30 分钟的「离线中」条目更新为 成功/失败。

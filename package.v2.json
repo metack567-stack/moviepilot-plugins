@@ -3,13 +3,14 @@
     "name": "115网盘追更·Bt0磁力版",
     "description": "结合MoviePilot订阅功能，自动搜索115网盘资源并转存缺失的电影和剧集（内置bt0磁力搜索源）。",
     "labels": "下载,115",
-    "version": "1.7.7",
+    "version": "1.7.8",
     "author": "metack567-stack",
     "level": 1,
     "v2": true,
     "v3": false,
     "release": true,
     "history": {
+      "v1.7.8": "- 修复 bt0 磁力「提交 115 离线下载失败」的误报：115 对已存在的任务统一回 errcode 10004（错误的链接），现在会先查离线任务列表，已在列表中（含已下载完成）即按「已提交」处理，交给离线回查判定完成，不再每轮空喊失败",
       "v1.7.5": "- 修复 MP V3 兼容：Subscribe 已无 tmdbid/doubanid 字段，改用 media_source+media_id（新增 utils/v3_compat.py，替换全部老字段访问）\n- 修复 SubscribeOper().list_by_tmdbid 在 V3 被移除导致的 AttributeError（改本地过滤）",
       "v1.7.6": "- 修复 V3 的 recognize_media 签名变化（不再接受 tmdbid/doubanid，改用 media_source+media_id）",
       "v1.7.7": "- bt0 精确匹配改用新版 2bt0-hub 通用接口（/api/items?source=local + /api/movie/{id}），不再依赖已移除的 /api/resolve 本地补丁"
