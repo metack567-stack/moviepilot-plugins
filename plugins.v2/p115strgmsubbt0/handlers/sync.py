@@ -23,6 +23,7 @@ from app.schemas.types import MediaType, NotificationType, TorrentStatus
 from app.utils.string import StringUtils
 
 from ..utils import FileMatcher, SubscribeFilter
+from ..utils.v3_compat import sub_tmdbid, sub_doubanid, list_subs_by_tmdbid
 from .search import SearchHandler
 from .subscribe import SubscribeHandler
 
@@ -256,8 +257,8 @@ class SyncHandler:
                 mediainfo = self._chain.recognize_media(
                     meta=meta,
                     mtype=meta.type,
-                    tmdbid=subscribe.tmdbid,
-                    doubanid=subscribe.doubanid,
+                    tmdbid=sub_tmdbid(subscribe),
+                    doubanid=sub_doubanid(subscribe),
                     cache=True
                 )
                 if not mediainfo:
@@ -337,7 +338,7 @@ class SyncHandler:
             logger.info(f"处理电影订阅：{subscribe.name} ({subscribe.year})")
 
             # 加载该订阅的历史积分花费（用 tmdb_id 作为唯一标识）
-            sub_key = f"tmdb_{subscribe.tmdbid}_movie" if subscribe.tmdbid else f"{subscribe.name}_movie"
+            sub_key = f"tmdb_{sub_tmdbid(subscribe)}_movie" if sub_tmdbid(subscribe) else f"{subscribe.name}_movie"
             if hasattr(self._search_handler, 'reset_sub_spent_points'):
                 self._search_handler.reset_sub_spent_points(sub_key)
 
@@ -392,8 +393,8 @@ class SyncHandler:
             mediainfo: MediaInfo = self._chain.recognize_media(
                 meta=meta,
                 mtype=MediaType.MOVIE,
-                tmdbid=subscribe.tmdbid,
-                doubanid=subscribe.doubanid,
+                tmdbid=sub_tmdbid(subscribe),
+                doubanid=sub_doubanid(subscribe),
                 cache=True
             )
             if not mediainfo:
@@ -637,7 +638,7 @@ class SyncHandler:
             logger.info(f"处理订阅：{subscribe.name} (S{subscribe.season or 1})")
 
             # 加载该订阅的历史积分花费（用 tmdb_id + 季数作为唯一标识）
-            sub_key = f"tmdb_{subscribe.tmdbid}_S{subscribe.season or 1}" if subscribe.tmdbid else f"{subscribe.name}_S{subscribe.season or 1}"
+            sub_key = f"tmdb_{sub_tmdbid(subscribe)}_S{subscribe.season or 1}" if sub_tmdbid(subscribe) else f"{subscribe.name}_S{subscribe.season or 1}"
             if hasattr(self._search_handler, 'reset_sub_spent_points'):
                 self._search_handler.reset_sub_spent_points(sub_key)
 
@@ -656,8 +657,8 @@ class SyncHandler:
             mediainfo: MediaInfo = self._chain.recognize_media(
                 meta=meta,
                 mtype=MediaType.TV,
-                tmdbid=subscribe.tmdbid,
-                doubanid=subscribe.doubanid,
+                tmdbid=sub_tmdbid(subscribe),
+                doubanid=sub_doubanid(subscribe),
                 cache=True
             )
 
@@ -1283,7 +1284,7 @@ class SyncHandler:
         episode_priority 已改为纯 int（无大小信息），不再缓存 size。
         """
         return self._query_file_size_from_db(
-            tmdbid=subscribe.tmdbid,
+            tmdbid=sub_tmdbid(subscribe),
             season=subscribe.season or 1,
             episode=episode
         )
@@ -1328,7 +1329,7 @@ class SyncHandler:
 
             mediainfo: MediaInfo = self._chain.recognize_media(
                 meta=meta, mtype=MediaType.TV,
-                tmdbid=subscribe.tmdbid, doubanid=subscribe.doubanid, cache=True
+                tmdbid=sub_tmdbid(subscribe), doubanid=sub_doubanid(subscribe), cache=True
             )
             if not mediainfo:
                 logger.warn(f"【洗版转存】无法识别媒体信息 {subscribe.name}")
@@ -1353,7 +1354,7 @@ class SyncHandler:
             # ---- 3. 扫描本地 strm 目录，获取已有画质评分 ----
             show_name = subscribe.name
             show_year = subscribe.year or ""
-            tmdbid = subscribe.tmdbid
+            tmdbid = sub_tmdbid(subscribe)
 
             # 确定本地目录路径
             candidate_bases = []
@@ -1926,7 +1927,7 @@ class SyncHandler:
         # 扫描本地strm目录（尝试多个路径）
         show_name = subscribe.name
         show_year = subscribe.year or ""
-        tmdbid = subscribe.tmdbid
+        tmdbid = sub_tmdbid(subscribe)
 
         # 优先级：subscribe.save_path > self._save_path > /media/电视剧
         candidate_bases = []

@@ -19,6 +19,7 @@ from sqlalchemy import text
 from app.core.config import settings, global_vars
 from app.core.event import Event, eventmanager
 from app.schemas.event import ResourceDownloadEventData
+from .utils.v3_compat import sub_tmdbid, sub_doubanid, list_subs_by_tmdbid
 from app.core.module import ModuleManager
 from app.db import SessionFactory
 from app.db.subscribe_oper import SubscribeOper
@@ -47,7 +48,7 @@ class P115StrgmSubBt0(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.7.4"
+    plugin_version = "1.7.5"
     # 插件作者
     plugin_author = "metack567-stack"
     # 作者主页
@@ -748,7 +749,7 @@ class P115StrgmSubBt0(_PluginBase):
                                 try:
                                     from app.schemas.types import MediaType as MediaTypeEnum
                                     mtype = MediaTypeEnum.TV if is_tv else MediaTypeEnum.MOVIE
-                                    tmdb_id = mediainfo_dict.get("tmdb_id") or subscribe.tmdbid
+                                    tmdb_id = mediainfo_dict.get("tmdb_id") or sub_tmdbid(subscribe)
                                     if tmdb_id:
                                         media_info = self.chain.recognize_media(mtype=mtype, tmdbid=tmdb_id)
                                         if media_info and media_info.category:
@@ -886,7 +887,7 @@ class P115StrgmSubBt0(_PluginBase):
         from app.db.subscribe_oper import SubscribeOper
         all_subs = []
         for season in season_list:
-            all_subs.extend(SubscribeOper().list_by_tmdbid(tmdbid, season))
+            all_subs.extend(list_subs_by_tmdbid(tmdbid, season))
 
         if not all_subs:
             return
@@ -2591,7 +2592,7 @@ class P115StrgmSubBt0(_PluginBase):
 
         for sub in target_subs:
             try:
-                tmdbid = getattr(sub, 'tmdbid', None) or getattr(sub, 'tvdbid', None)
+                tmdbid = sub_tmdbid(sub) or getattr(sub, 'tvdbid', None)
                 season = sub.season or 1
                 sub_name = f"{sub.name} S{season:02d}"
 
@@ -2817,7 +2818,7 @@ class P115StrgmSubBt0(_PluginBase):
 
         for sub in target_subs:
             try:
-                tmdbid = getattr(sub, 'tmdbid', None)
+                tmdbid = sub_tmdbid(sub)
                 season = sub.season or 1
                 sub_name = f"{sub.name} S{season:02d}"
 
