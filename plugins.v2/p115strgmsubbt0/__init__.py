@@ -19,7 +19,7 @@ from sqlalchemy import text
 from app.core.config import settings, global_vars
 from app.core.event import Event, eventmanager
 from app.schemas.event import ResourceDownloadEventData
-from .utils.v3_compat import sub_tmdbid, sub_doubanid, list_subs_by_tmdbid
+from .utils.v3_compat import sub_tmdbid, sub_doubanid, list_subs_by_tmdbid, recognize_kwargs
 from app.core.module import ModuleManager
 from app.db import SessionFactory
 from app.db.subscribe_oper import SubscribeOper
@@ -48,7 +48,7 @@ class P115StrgmSubBt0(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.7.5"
+    plugin_version = "1.7.6"
     # 插件作者
     plugin_author = "metack567-stack"
     # 作者主页
@@ -751,7 +751,7 @@ class P115StrgmSubBt0(_PluginBase):
                                     mtype = MediaTypeEnum.TV if is_tv else MediaTypeEnum.MOVIE
                                     tmdb_id = mediainfo_dict.get("tmdb_id") or sub_tmdbid(subscribe)
                                     if tmdb_id:
-                                        media_info = self.chain.recognize_media(mtype=mtype, tmdbid=tmdb_id)
+                                        media_info = self.chain.recognize_media(mtype=mtype, **recognize_kwargs(tmdbid=tmdb_id))
                                         if media_info and media_info.category:
                                             category = media_info.category
                                             logger.info(f"新增订阅 {subscribe.name}：通过 TMDB 识别到二级分类「{category}」")

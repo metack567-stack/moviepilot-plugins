@@ -23,7 +23,7 @@ from app.schemas.types import MediaType, NotificationType, TorrentStatus
 from app.utils.string import StringUtils
 
 from ..utils import FileMatcher, SubscribeFilter
-from ..utils.v3_compat import sub_tmdbid, sub_doubanid, list_subs_by_tmdbid
+from ..utils.v3_compat import sub_tmdbid, sub_doubanid, list_subs_by_tmdbid, recognize_kwargs
 from .search import SearchHandler
 from .subscribe import SubscribeHandler
 
@@ -257,8 +257,7 @@ class SyncHandler:
                 mediainfo = self._chain.recognize_media(
                     meta=meta,
                     mtype=meta.type,
-                    tmdbid=sub_tmdbid(subscribe),
-                    doubanid=sub_doubanid(subscribe),
+                    **recognize_kwargs(subscribe),
                     cache=True
                 )
                 if not mediainfo:
@@ -393,8 +392,7 @@ class SyncHandler:
             mediainfo: MediaInfo = self._chain.recognize_media(
                 meta=meta,
                 mtype=MediaType.MOVIE,
-                tmdbid=sub_tmdbid(subscribe),
-                doubanid=sub_doubanid(subscribe),
+                **recognize_kwargs(subscribe),
                 cache=True
             )
             if not mediainfo:
@@ -657,8 +655,7 @@ class SyncHandler:
             mediainfo: MediaInfo = self._chain.recognize_media(
                 meta=meta,
                 mtype=MediaType.TV,
-                tmdbid=sub_tmdbid(subscribe),
-                doubanid=sub_doubanid(subscribe),
+                **recognize_kwargs(subscribe),
                 cache=True
             )
 
@@ -1329,7 +1326,7 @@ class SyncHandler:
 
             mediainfo: MediaInfo = self._chain.recognize_media(
                 meta=meta, mtype=MediaType.TV,
-                tmdbid=sub_tmdbid(subscribe), doubanid=sub_doubanid(subscribe), cache=True
+                **recognize_kwargs(subscribe), cache=True
             )
             if not mediainfo:
                 logger.warn(f"【洗版转存】无法识别媒体信息 {subscribe.name}")
@@ -2510,8 +2507,7 @@ class SyncHandler:
 
             mediainfo = self._chain.recognize_media(
                 meta=meta, mtype=MediaType.TV,
-                tmdbid=getattr(subscribe, 'tmdbid', None),
-                doubanid=getattr(subscribe, 'doubanid', None),
+                **recognize_kwargs(subscribe),
                 cache=True
             )
             if not mediainfo:

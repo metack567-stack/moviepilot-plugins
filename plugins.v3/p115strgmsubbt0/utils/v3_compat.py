@@ -7,7 +7,7 @@ MP V3 重构了 Subscribe 模型：不再有 tmdbid / doubanid / modified 列，
 """
 from typing import Any, List, Optional
 
-__all__ = ["sub_tmdbid", "sub_doubanid", "subscribe_modified", "list_subs_by_tmdbid"]
+__all__ = ["sub_tmdbid", "sub_doubanid", "subscribe_modified", "list_subs_by_tmdbid", "recognize_kwargs"]
 
 _TMDB_SOURCES = {"themoviedb", "tmdb"}
 _DOUBAN_SOURCES = {"douban"}
@@ -57,3 +57,35 @@ def list_subs_by_tmdbid(tmdbid: Any, season: Optional[int] = None) -> List[Any]:
             continue
         out.append(s)
     return out
+
+
+def _supports_media_id() -> bool:
+    """V3 的 recognize_media 用 media_source+media_id；V2 用 tmdbid/doubanid。"""
+    try:
+        import inspect
+        from app.chain.media import MediaChain
+        return "media_id" in inspect.signature(MediaChain.recognize_media).parameters
+    except Exception:
+        return False
+
+
+_V3_MEDIA_ID = _supports_media_id()
+
+
+def recognize_kwargs(sub: Any = None, tmdbid: Any = None, doubanid: Any = None) -> dict:
+    """给 recognize_media 用的兼容 kwargs：V3 → media_source+media_id，V2 → tmdbid/doubanid。"""
+    if sub is not None:
+        src, mid = _src(sub), _mid(sub)
+        if src and mid:
+            return {"media_source": src, "media_id": mid}
+        tmdbid = tmdbid or getattr(sub, "tmdbid", None)
+        doubanid = doubanid or getattr(sub, "doubanid", None)
+    if tmdbid:
+        if _V3_MEDIA_ID:
+            return {"media_source": "themoviedb", "media_id": str(tmdbid)}
+        return {"tmdbid": str(tmdbid)}
+    if doubanid:
+        if _V3_MEDIA_ID:
+            return {"media_source": "douban", "media_id": str(doubanid)}
+        return {"doubanid": str(doubanid)}
+    return {}
