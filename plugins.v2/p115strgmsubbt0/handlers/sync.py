@@ -279,7 +279,15 @@ class SyncHandler:
                         # 115 会留下「下载成功但文件已被清掉」的坏任务：任务还在列表、status=2，
                         # 但 file_id 在网盘里查不到 ⇒ 永远等不到入库，必须判失败去换资源。
                         task = self._find_offline_task(h.get("info_hash") or "")
-                        if task is not None and self._offline_file_missing(task.get("file_id")):
+                        # ⚠️ file_id 失联有两种可能：①文件真被删；②任务已被「网盘整理」搬走
+                        #    （move 之后旧 file_id 必然失效，2026-10-11 实证 90008 + file_id==delete_file_id）。
+                        #    单独拿它判失败会把「已整理成功」的条目误判成失败 → 触发重复下载，
+                        #    所以必须叠加「超 24 小时仍未入库」才动手。
+                        if (
+                            task is not None
+                            and self._offline_file_missing(task.get("file_id"))
+                            and overdue
+                        ):
                             h["status"] = "失败"
                             updated += 1
                             logger.error(
