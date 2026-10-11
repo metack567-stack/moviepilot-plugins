@@ -269,6 +269,7 @@ class SyncHandler:
                     _ts = now
                 overdue = (now - _ts).total_seconds() >= 86400
                 if st == 2:  # 下载成功
+                    self._write_mp_download_history(h)
                     # 以「媒体库入库」为完成标准：离线成功且入库后才完成订阅
                     ingested = self._try_finish_offline_subscribe(h)
                     if ingested:
@@ -422,6 +423,75 @@ class SyncHandler:
         existing = expected - missing
         return set(eps) <= existing
 
+    def _movie_ingested_hint(self, subscribe) -> Optional[str]:
+        '''返回「该电影已在库」的凭证（非 None 即已入库）。
+
+        判据取自 MP 的整理历史（持久事实）：插件自身的转存记录会因插件升级/清理而丢失
+        （2026-10-12 实证：V3 升级后 bt0 历史只剩 3 条，已在库的电影被重新转存）。
+        取数用 SessionFactory 原始 SQL —— 与 wash/清理整理记录的既有实现同一条路径，
+        不依赖 TransferHistoryOper 的进程内事务执行器。
+        '''
+        try:
+            from app.db import SessionFactory
+            from sqlalchemy import text as sa_text
+            with SessionFactory() as db:
+                rows = db.execute(
+                    sa_text(
+                        "SELECT dest, year, type, status FROM transferhistory "
+                        "WHERE title = :title ORDER BY id DESC LIMIT 20"
+                    ),
+                    {"title": str(subscribe.name or "")},
+                ).fetchall()
+        except Exception as e:
+            logger.debug(f"查询整理历史失败（{subscribe.name}）：{e}")
+            return None
+        year = str(subscribe.year or "")
+        for dest, ryear, rtype, status in rows:
+            try:
+                if rtype not in (None, "", "电影"):
+                    continue
+                if year and ryear and str(ryear) != year:
+                    continue
+                if status in (0, False):
+                    continue
+                if dest:
+                    return str(dest)
+            except Exception:
+                continue
+        return None
+
+    def _write_mp_download_history(self, h: dict) -> bool:
+        '''把 bt0 已成功完成的 115 离线下载补写成 MP 下载历史（按 info_hash 幂等）。
+
+        MP 判定电影订阅「已全部下载」依据下载历史；不写这条记录，就只能等媒体服务器
+        （Emby）扫库收录后才判完成 —— 2026-09-28 入库的订阅拖到 10-12 才完成，期间每轮空跑。
+        '''
+        try:
+            from app.db.downloadhistory_oper import DownloadHistoryOper
+            oper = DownloadHistoryOper()
+            info_hash = str(h.get("info_hash") or "")
+            if info_hash and oper.get_by_hash(info_hash):
+                return False
+            oper.add(
+                path=(h.get("file_name") or h.get("title") or ""),
+                type=(h.get("type") or "电影"),
+                title=(h.get("title") or ""),
+                year=str(h.get("year") or ""),
+                downloader="P115StrgmSubBt0",
+                download_hash=(info_hash or None),
+                torrent_name=(h.get("file_name") or None),
+                torrent_description=(h.get("file_name") or None),
+                torrent_site="bt0",
+                username="P115StrgmSubBt0",
+                date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                note={"source": "P115StrgmSubBt0", "info_hash": info_hash},
+            )
+            logger.info(f"bt0 已补写 MP 下载历史：{h.get('title')}，订阅可据此判定完成")
+            return True
+        except Exception as e:
+            logger.warning(f"补写 MP 下载历史失败：{e}")
+            return False
+
     def process_movie_subscribe(
         self,
         subscribe,
@@ -487,6 +557,14 @@ class SyncHandler:
                     return transferred_count
                 else:
                     logger.info(f"电影 {subscribe.name} 洗版中，历史分数 {movie_history_score}，尝试寻找更优资源")
+
+            # 【durable 判据】插件自身转存记录会被插件升级/清理清空（2026-10-12 实证只剩 3 条），
+            # 因此再按 MP 整理历史确认一次「已在库」，避免把已入库的电影重复转存下载。
+            if not is_best_version:
+                ingested_hint = self._movie_ingested_hint(subscribe)
+                if ingested_hint:
+                    logger.info(f"电影 {subscribe.name} 已在库（MP 整理历史：{ingested_hint}），非洗版模式，跳过")
+                    return transferred_count
 
             # 生成元数据
             meta = MetaInfo(subscribe.name)
@@ -669,10 +747,8 @@ class SyncHandler:
                                     type=mediainfo.type.value,
                                     title=mediainfo.title,
                                     year=mediainfo.year,
-                                    tmdbid=mediainfo.tmdb_id,
-                                    imdbid=mediainfo.imdb_id,
-                                    tvdbid=mediainfo.tvdb_id,
-                                    doubanid=mediainfo.douban_id,
+                                    media_source=str(getattr(mediainfo, "media_source", "") or "") or None,
+                                    media_id=str(getattr(mediainfo, "media_id", "") or "") or None,
                                     image=mediainfo.get_poster_image(),
                                     downloader="115网盘",
                                     download_hash=matched_file.get("id"),
