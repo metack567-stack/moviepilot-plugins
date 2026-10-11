@@ -48,7 +48,7 @@ class P115StrgmSubBt0(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.7.8"
+    plugin_version = "1.7.9"
     # 插件作者
     plugin_author = "metack567-stack"
     # 作者主页
@@ -2835,7 +2835,9 @@ class P115StrgmSubBt0(_PluginBase):
                         pass
                     if not records:
                         rows = db.execute(
-                            text("SELECT * FROM transferhistory WHERE tmdbid = :t ORDER BY id DESC LIMIT 100"),
+                            text("SELECT * FROM transferhistory "
+                                 "WHERE media_source = 'themoviedb' AND media_id = :t "
+                                 "ORDER BY id DESC LIMIT 100"),
                             {"t": tmdbid}
                         ).fetchall()
                         if rows:

@@ -1218,7 +1218,8 @@ class SyncHandler:
                     text(
                         "SELECT json_extract(src_fileitem, '$.size') "
                         "FROM transferhistory "
-                        "WHERE tmdbid = :tmdbid AND seasons = :seasons AND episodes = :episodes "
+                        "WHERE media_source = 'themoviedb' AND media_id = :tmdbid "
+                        "AND seasons = :seasons AND episodes = :episodes "
                         "ORDER BY id DESC LIMIT 1"
                     ),
                     {"tmdbid": tmdbid, "seasons": seasons_str, "episodes": episodes_str}
@@ -2257,7 +2258,8 @@ class SyncHandler:
             with SessionFactory() as db:
                 oper = SubscribeOper(db=db)
                 rows = db.execute(text(
-                    "SELECT id, episode_priority, name, season, save_path, tmdbid, year "
+                    "SELECT id, episode_priority, name, season, save_path, "
+                    "CASE WHEN media_source = 'themoviedb' THEN media_id ELSE NULL END AS tmdbid, year "
                     "FROM subscribe WHERE episode_priority IS NOT NULL AND episode_priority != '{}'"
                 )).fetchall()
         except Exception as e:
@@ -2439,7 +2441,7 @@ class SyncHandler:
                 # ----- 寻找本地 strm 目录 -----
                 show_name = subscribe.name
                 show_year = f" ({subscribe.year})" if subscribe.year else ""
-                tmdbid = getattr(subscribe, 'tmdbid', None)
+                tmdbid = sub_tmdbid(subscribe)
                 tmdb_str = f" {{tmdbid={tmdbid}}}" if tmdbid else ""
 
                 candidate_bases = []
