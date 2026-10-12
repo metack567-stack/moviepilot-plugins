@@ -2,6 +2,8 @@
 115网盘订阅追更插件
 结合MoviePilot订阅功能，自动搜索115网盘资源并转存缺失剧集
 """
+
+import json
 import datetime
 import time
 import threading
@@ -48,7 +50,7 @@ class P115StrgmSubBt0(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.7.12"
+    plugin_version = "1.7.13"
     # 插件作者
     plugin_author = "metack567-stack"
     # 作者主页
@@ -1061,6 +1063,12 @@ class P115StrgmSubBt0(_PluginBase):
         self.stop_service()
         download_so_file(Path(__file__).parent / "lib")
         self._apply_http_patches()
+
+        # 广告文件防护：幂等补充整理排除词（失败不影响插件加载）
+        try:
+            self._ensure_transfer_exclude_words()
+        except Exception as e:
+            logger.warning(f"【整理排除词】初始化检查跳过：{e}")
 
         # 🛡️ 修复：config 可能为 None/空（新装插件未配置），兜底为空 dict + 关键属性默认值
         config = config or {}
@@ -2300,6 +2308,12 @@ class P115StrgmSubBt0(_PluginBase):
                 "summary": "清空历史记录"
             },
             {
+                "path": "/ensure_transfer_exclude",
+                "endpoint": self.api_ensure_transfer_exclude,
+                "methods": ["POST"],
+                "summary": "幂等补充 MP 整理排除词（防广告文件被整理入库）"
+            },
+            {
                 "path": "/apply_filter_rules",
                 "endpoint": self.api_apply_filter_rules,
                 "methods": ["POST"],
@@ -2546,6 +2560,39 @@ class P115StrgmSubBt0(_PluginBase):
 
     def api_clear_history(self, apikey: str) -> dict:
         return self._api_handler.clear_history(apikey)
+
+    def _ensure_transfer_exclude_words(self) -> dict:
+        """幂等补充 MP「整理排除词」：阻止资源站广告文件被整理或被失败重试强推进库
+
+        只加匹配广告文件名的窄模式；不加宽泛站点名（发布目录名含站点名，会连正片一起排除）。
+        """
+        patterns = ["更多无水印", "无水印.{0,12}请访问"]
+        oper = SystemConfigOper()
+        before = oper.get(SystemConfigKey.TransferExcludeWords) or []
+        if isinstance(before, str):
+            try:
+                before = json.loads(before)
+            except Exception:
+                before = [before]
+        before = list(before)
+        added = [p for p in patterns if p not in before]
+        if added:
+            oper.set(SystemConfigKey.TransferExcludeWords, before + added)
+        after = list(oper.get(SystemConfigKey.TransferExcludeWords) or [])
+        active = [p for p in patterns if p in after]
+        logger.info(f"【整理排除词】新增 {added}，当前共 {len(after)} 条，生效 {active}")
+        return {"added": added, "total": len(after), "active": active, "all": after}
+
+    def api_ensure_transfer_exclude(self, apikey="") -> dict:
+        """API: 幂等补充 MP 整理排除词（广告文件防护）"""
+        from app.core.config import settings as _settings
+        if apikey != _settings.API_TOKEN:
+            return {"success": False, "message": "apikey 校验不通过"}
+        try:
+            return {"success": True, **self._ensure_transfer_exclude_words()}
+        except Exception as e:
+            logger.error(f"【整理排除词】补充失败：{e}")
+            return {"success": False, "message": str(e)}
 
     def api_apply_filter_rules(self) -> dict:
         """API: 手动应用MP过滤规则"""
