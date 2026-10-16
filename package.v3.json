@@ -3,7 +3,7 @@
     "name": "115网盘追更·Bt0磁力版",
     "description": "结合MoviePilot订阅功能，自动搜索115网盘资源并转存缺失的电影和剧集（内置bt0磁力搜索源）。",
     "labels": "下载,115",
-    "version": "1.7.11",
+    "version": "1.7.14",
     "release": true,
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Frontend/refs/heads/v2/src/assets/images/misc/u115.png",
     "author": "metack567-stack",
@@ -17,7 +17,10 @@
       "v1.7.4": "- bt0 离线完成以媒体库入库为完成标准（未入库保持等待）\n- bt0 离线成功后补完成订阅（电影/剧集通用）\n- 剧集磁力择优：按「覆盖缺失集数, 磁力总集数」最大提交\n- 新增 V3 支持：package.v3.json + plugins.v3/，并声明依赖清单（p115client 0.0.9.6.5.1 + python-concurrenttools 0.1.8）",
       "v1.7.5": "- 修复 MP V3 兼容：Subscribe 已无 tmdbid/doubanid 字段，改用 media_source+media_id（新增 utils/v3_compat.py，替换全部老字段访问）\n- 修复 SubscribeOper().list_by_tmdbid 在 V3 被移除导致的 AttributeError（改本地过滤）",
       "v1.7.6": "- 修复 V3 的 recognize_media 签名变化（不再接受 tmdbid/doubanid，改用 media_source+media_id）",
-      "v1.7.7": "- bt0 精确匹配改用新版 2bt0-hub 通用接口（/api/items?source=local + /api/movie/{id}），不再依赖已移除的 /api/resolve 本地补丁"
+      "v1.7.7": "- bt0 精确匹配改用新版 2bt0-hub 通用接口（/api/items?source=local + /api/movie/{id}），不再依赖已移除的 /api/resolve 本地补丁",
+      "v1.7.14": "- get_page 触发离线回查：打开插件页面即把 115 已完成/失败的离线任务状态更新回 history（复用 p115strmhelper 120s 缓存，30 分钟防抖，仅处理提交超 30 分钟条目，有更新才写回）",
+      "v1.7.13": "- TransferExcludeWords 自动补丁（广告文件排除词）",
+      "v1.7.12": "- 已入库即跳过（改用 MP 整理历史，不再依赖会被清空的插件转存记录）\n- 115 离线成功后补写 MP 下载历史（订阅可及时判定完成）"
     }
   }
 }
