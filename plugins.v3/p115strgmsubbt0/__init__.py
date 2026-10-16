@@ -2291,6 +2291,14 @@ class P115StrgmSubBt0(_PluginBase):
 
     def get_page(self) -> Optional[List[dict]]:
         history = self.get_data('history') or []
+        try:
+            # bt0 离线回查（页面触发）：打开页面时把 115 已完成/失败的离线任务状态更新回 history。
+            # 复用 p115strmhelper 120s 缓存（新鲜时零新增 115 请求），30 分钟阈值天然防抖，
+            # 仅处理提交超过 30 分钟的「离线中」条目；有更新才写回。
+            if self._sync_handler and self._sync_handler.refresh_offline_history(history):
+                self.save_data('history', history)
+        except Exception as e:
+            logger.warning(f"bt0 离线回查（页面触发）失败：{e}")
         return UIConfig.get_page(history)
 
     def get_api(self) -> List[Dict[str, Any]]:
