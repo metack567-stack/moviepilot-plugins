@@ -151,7 +151,9 @@ class SearchHandler:
         self,
         mediainfo: MediaInfo,
         media_type: MediaType,
-        season: Optional[int] = None
+        season: Optional[int] = None,
+        quality: str = "",
+        resolution: str = ""
     ) -> List[Dict]:
         """
         统一的资源搜索方法，支持电影和电视剧
@@ -168,7 +170,7 @@ class SearchHandler:
         sources = self.get_enabled_sources()
 
         for source in sources:
-            results = self.search_single_source(source, mediainfo, media_type, season)
+            results = self.search_single_source(source, mediainfo, media_type, season, quality, resolution)
             if results:
                 return results
             else:
@@ -184,7 +186,9 @@ class SearchHandler:
         source: str,
         mediainfo: MediaInfo,
         media_type: MediaType,
-        season: Optional[int] = None
+        season: Optional[int] = None,
+        quality: str = "",
+        resolution: str = ""
     ) -> List[Dict]:
         """
         使用指定的单一搜索源查询资源
@@ -207,7 +211,7 @@ class SearchHandler:
         elif source == "tg":
             return self._search_tg(mediainfo, media_type, season)
         elif source == "bt0":
-            return self._search_bt0(mediainfo, media_type, season)
+            return self._search_bt0(mediainfo, media_type, season, quality, resolution)
         else:
             logger.warning(f"未知的搜索源: {source}")
             return []
@@ -892,11 +896,59 @@ class SearchHandler:
             for link in matched_links
         ]
 
+    def _quality_score(self, r: dict, prefer_res: str = "", prefer_src: str = "") -> int:
+        """按画质给 bt0 磁力打分（越大越优），用于择优排序。
+        优先取 /api/magnets 返回的 quality 字段（如 WEB-1080P / 1080P蓝光），缺失时回退从标题正则推断；
+        prefer_res/prefer_src 为订阅期望的分辨率/来源，命中则加权靠前。
+        """
+        q = (r.get("quality") or "").strip() or (r.get("title") or "")
+        score = 0
+        # 分辨率
+        if re.search(r"(2160|4K|UHD)", q, re.IGNORECASE):
+            score += 40
+        elif re.search(r"1080", q):
+            score += 30
+        elif re.search(r"720", q):
+            score += 20
+        elif re.search(r"(480|576)", q, re.IGNORECASE):
+            score += 10
+        # 来源/压制类型
+        if re.search(r"蓝光|Remux|BluRay|BD|原盘", q, re.IGNORECASE):
+            score += 30
+        elif re.search(r"WEB[- ]?(DL|Rip|HD)", q, re.IGNORECASE):
+            score += 20
+        elif re.search(r"HDTV|HDRip|DVDRip", q, re.IGNORECASE):
+            score += 10
+        # 编码
+        if re.search(r"HEVC|H265|X265|H\.265", q, re.IGNORECASE):
+            score += 10
+        # 订阅偏好加权（分辨率命中 +15，来源命中 +10）
+        pr = (prefer_res or "").lower()
+        if "4k" in pr or "2160" in pr:
+            if re.search(r"(2160|4K|UHD)", q, re.IGNORECASE):
+                score += 15
+        elif "1080" in pr:
+            if re.search(r"1080", q):
+                score += 15
+        elif "720" in pr:
+            if re.search(r"720", q):
+                score += 15
+        ps = (prefer_src or "").lower()
+        if any(x in ps for x in ("蓝光", "blu", "remux", "原盘")):
+            if re.search(r"蓝光|Remux|BluRay|BD|原盘", q, re.IGNORECASE):
+                score += 10
+        elif "web" in ps:
+            if re.search(r"WEB", q, re.IGNORECASE):
+                score += 10
+        return score
+
     def _search_bt0(
         self,
         mediainfo: MediaInfo,
         media_type: MediaType,
-        season: Optional[int] = None
+        season: Optional[int] = None,
+        quality: str = "",
+        resolution: str = ""
     ) -> List[Dict]:
         """
         使用本地 bt0 磁力库（2bt0-hub）搜索资源（兜底源）
@@ -930,9 +982,15 @@ class SearchHandler:
                     "source": "bt0",
                     "is_magnet": True,
                     "detail_url": item.get("detail_url", ""),
+                    "quality": item.get("quality", ""),
                     "episodes": self._bt0_client.parse_episodes(item.get("title", ""), movie.get("episodes", "")),
                 })
             if results:
+                # 择优：按画质（/api/magnets quality 字段，缺失回退标题）降序，命中订阅偏好的优先
+                results.sort(
+                    key=lambda r: self._quality_score(r, quality, resolution),
+                    reverse=True
+                )
                 logger.info(f"bt0 精确匹配命中：{movie.get('title')}（{movie.get('years')}），返回 {len(results)} 条磁力")
                 return results
             logger.info(f"bt0 精确匹配命中但无磁力详情（{movie.get('title')}），降级模糊搜索")
@@ -1004,16 +1062,20 @@ class SearchHandler:
                     "source": "bt0",
                     "is_magnet": True,
                     "detail_url": item.get("detail_url", ""),
+                    "quality": item.get("quality", ""),
                     "episodes": self._bt0_client.parse_episodes(title, item.get("episodes", "")),
                 })
 
             if results:
-                # 标题含订阅关键词（含原名/别名）的排前（软排序，不剔除）
-                def _bt0_score(r: dict) -> int:
-                    t = self._bt0_client._compact_for_match(r["title"])
-                    k = self._bt0_client._compact_for_match(mediainfo.title)
-                    return 0 if (k and k in t) else 1
-                results.sort(key=_bt0_score)
+                # 择优：画质降序优先（含订阅偏好加权），其次标题含订阅关键词排前（软排序，不剔除）
+                k0 = self._bt0_client._compact_for_match(mediainfo.title)
+                results.sort(
+                    key=lambda r: (
+                        self._quality_score(r, quality, resolution),
+                        0 if (k0 and k0 in self._bt0_client._compact_for_match(r["title"])) else 1
+                    ),
+                    reverse=True
+                )
                 logger.info(f"bt0 关键词 '{keyword}' 搜索到 {len(results)} 条磁力资源")
                 return results
             else:

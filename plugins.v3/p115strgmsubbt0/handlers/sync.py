@@ -585,7 +585,9 @@ class SyncHandler:
             # 搜索网盘资源
             p115_results = self._search_handler.search_resources(
                 mediainfo=mediainfo,
-                media_type=MediaType.MOVIE
+                media_type=MediaType.MOVIE,
+                quality=subscribe.quality,
+                resolution=subscribe.resolution
             )
 
             if not p115_results:
@@ -1061,7 +1063,9 @@ class SyncHandler:
                     source=source,
                     mediainfo=mediainfo,
                     media_type=MediaType.TV,
-                    season=season
+                    season=season,
+                    quality=subscribe.quality,
+                    resolution=subscribe.resolution
                 )
 
                 if not p115_results:
@@ -1673,7 +1677,8 @@ class SyncHandler:
 
                 p115_results = self._search_handler.search_single_source(
                     source=source, mediainfo=mediainfo,
-                    media_type=MediaType.TV, season=season
+                    media_type=MediaType.TV, season=season,
+                    quality=subscribe.quality, resolution=subscribe.resolution
                 )
 
                 if not p115_results:
