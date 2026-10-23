@@ -50,7 +50,7 @@ class P115StrgmSubBt0(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.7.14"
+    plugin_version = "1.7.15"
     # 插件作者
     plugin_author = "metack567-stack"
     # 作者主页
@@ -121,6 +121,7 @@ class P115StrgmSubBt0(_PluginBase):
     # bt0 磁力库（2bt0-hub 兜底搜索源）配置
     _bt0_enabled: bool = True
     _bt0_url: str = "http://192.168.8.219:8000"
+    _bt0_apikey: str = ""
     _tg_channel_ids: str = ""
 
     # TG 自动转发配置
@@ -1135,6 +1136,7 @@ class P115StrgmSubBt0(_PluginBase):
             # bt0 磁力库配置
             self._bt0_enabled = config.get("bt0_enabled", True)
             self._bt0_url = config.get("bt0_url", "http://192.168.8.219:8000") or "http://192.168.8.219:8000"
+            self._bt0_apikey = (config.get("bt0_apikey", "") or "").strip()
 
             # TG 自动转发配置
             self._tg_forward_enabled = config.get("tg_forward_enabled", False)
@@ -1984,7 +1986,7 @@ class P115StrgmSubBt0(_PluginBase):
 
         # bt0 磁力库客户端（2bt0-hub 本地 API）
         if self._bt0_enabled and self._bt0_url:
-            self._bt0_client = BTOClient(base_url=self._bt0_url)
+            self._bt0_client = BTOClient(base_url=self._bt0_url, api_key=self._bt0_apikey)
         else:
             self._bt0_client = None
 
@@ -2213,6 +2215,7 @@ class P115StrgmSubBt0(_PluginBase):
             # bt0 磁力库配置
             "bt0_enabled": self._bt0_enabled,
             "bt0_url": self._bt0_url,
+            "bt0_apikey": self._bt0_apikey,
             # 其他配置
             "search_source_order": self._search_source_order,
             "subscribe_filter_mode": self._subscribe_filter_mode,

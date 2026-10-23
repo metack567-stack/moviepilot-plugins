@@ -358,6 +358,13 @@ class UIConfig:
                                              'content': [{'component': 'VTextField', 'props': {"clearable": True, 'model': 'bt0_url', 'label': '2bt0-hub 地址', 'placeholder': 'http://192.168.8.219:8000', 'hint': '本地 2bt0-hub Web 地址；容器内可用 http://192.168.8.219:8000'}}]}
                                         ]
                                     },
+                                    {
+                                        'component': 'VRow',
+                                        'content': [
+                                            {'component': 'VCol', 'props': {'cols': 12, 'md': 9},
+                                             'content': [{'component': 'VTextField', 'props': {"clearable": True, 'model': 'bt0_apikey', 'label': '2bt0 API 密钥', 'placeholder': '请输入 X-API-Key', 'hint': '2bt0 对外 API 密钥（X-API-Key 头）；bt0 服务已强制鉴权，必填，否则搜索 401'}}]}
+                                        ]
+                                    },
                                 ]}  # end VExpansionPanelText
                             ]  # end VExpansionPanel content
                         },  # end VExpansionPanel (搜索源)
@@ -868,6 +875,7 @@ class UIConfig:
             "tg_forward_target": "",
             "bt0_enabled": True,
             "bt0_url": "http://192.168.8.219:8000",
+            "bt0_apikey": "",
             "search_source_order": [],
             "subscribe_filter_mode": "exclude",
             "exclude_subscribes": [],

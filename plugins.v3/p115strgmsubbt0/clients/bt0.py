@@ -13,18 +13,21 @@ from app.log import logger
 class BTOClient:
     """bt0 磁力库搜索客户端"""
 
-    def __init__(self, base_url: str = "http://192.168.8.219:8000", timeout: int = 10, section: int = 1):
+    def __init__(self, base_url: str = "http://192.168.8.219:8000", timeout: int = 10, section: int = 1, api_key: str = ""):
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         # 1=电影 2=电视剧（对应 2bt0-hub 板块）
         self._section = section
+        # 2bt0 对外 API 密钥（X-API-Key 头；bt0 服务已强制鉴权，缺失 401）
+        self._api_key = (api_key or "").strip()
 
     def _get(self, url: str, params: dict):
         """GET 请求，带 2 次重试（本地服务偶发重启/繁忙时避免漏搜）"""
+        headers = {"X-API-Key": self._api_key} if self._api_key else {}
         last_exc = None
         for attempt in range(3):
             try:
-                resp = requests.get(url, params=params, timeout=self._timeout)
+                resp = requests.get(url, params=params, headers=headers, timeout=self._timeout)
                 resp.raise_for_status()
                 return resp
             except Exception as e:
@@ -82,6 +85,27 @@ class BTOClient:
             logger.warning(f"bt0 影片详情获取失败（{idcode}）：{e}")
             return {}
 
+    def _movie_magnets(self, movie_id: str) -> List[Dict]:
+        """按影片取磁力（对外 API /api/magnets）：一次调用返回该片全部磁力。
+
+        2bt0 对外 API 强制 X-API-Key 鉴权；page 参数被忽略（一次返回全量，含 total）。
+        返回字段：[{info_hash, magnet, title, size, published_at, category, detail_url, quality}]。
+        """
+        try:
+            resp = self._get(
+                f"{self._base_url}/api/magnets",
+                {"movie_id": str(movie_id)}
+            )
+            data = resp.json() or {}
+            magnets = data.get("magnets") or []
+            logger.info(
+                f"bt0 /api/magnets movie_id={movie_id} -> {len(magnets)}/{data.get('total')} 条磁力"
+            )
+            return magnets
+        except Exception as e:
+            logger.error(f"bt0 /api/magnets 失败（{movie_id}）：{e}")
+            return []
+
     def resolve(self, keyword: str, year: str = "") -> Dict:
         """
         精确匹配：按标题+年份解析影片，返回该影片全部磁力
@@ -137,9 +161,7 @@ class BTOClient:
                     my = str(movie.get("years") or "").strip()
                     if not (my == y or my.startswith(y)):
                         continue
-                magnets = self._local_items({"movie_id": mid, "sc": self._section}, max_pages=3)
-                if not magnets:
-                    magnets = g["magnets"]
+                magnets = self._movie_magnets(mid) or g["magnets"]
                 logger.info(
                     f"bt0 精确匹配（本地库）：{movie.get('title')}（{movie.get('years')}）"
                     f"-> {len(magnets)} 条磁力"
