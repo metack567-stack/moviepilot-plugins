@@ -19,19 +19,44 @@ class BTOClient:
         # 1=电影 2=电视剧（对应 2bt0-hub 板块）
         self._section = section
         # 2bt0 对外 API 密钥（X-API-Key 头；bt0 服务已强制鉴权，缺失 401）
-        self._api_key = (api_key or "").strip()
+        # 未显式配置时自动从 hub 的 /api/apikey 获取（仅内网可见），避免升级/漏配后全量 401
+        self._api_key = (api_key or "").strip() or self._auto_discover_api_key()
+
+    def _auto_discover_api_key(self) -> str:
+        """从 2bt0-hub 自动读取对外 API 密钥。
+
+        hub 的密钥持久化在 /data 数据库，容器重建不会变化；该端点仅允许私有网段访问，
+        MoviePilot 容器经 Docker 网关访问属于内网。配置里显式填了 bt0_apikey 时不会走这里。
+        """
+        try:
+            resp = requests.get(f"{self._base_url}/api/apikey", timeout=3)
+            resp.raise_for_status()
+            key = str((resp.json() or {}).get("api_key") or "").strip()
+            if key:
+                logger.info("bt0 已自动获取 2bt0-hub API 密钥（X-API-Key）")
+            return key
+        except Exception as e:
+            logger.warning(f"bt0 自动获取 API 密钥失败，后续请求可能因缺少密钥而 401：{e}")
+            return ""
 
     def _get(self, url: str, params: dict):
         """GET 请求，带 2 次重试（本地服务偶发重启/繁忙时避免漏搜）"""
-        headers = {"X-API-Key": self._api_key} if self._api_key else {}
         last_exc = None
         for attempt in range(3):
             try:
+                # 每次读取密钥，便于运行中 hub 轮换密钥后自动恢复
+                if not self._api_key:
+                    self._api_key = self._auto_discover_api_key()
+                headers = {"X-API-Key": self._api_key} if self._api_key else {}
                 resp = requests.get(url, params=params, headers=headers, timeout=self._timeout)
                 resp.raise_for_status()
                 return resp
             except Exception as e:
                 last_exc = e
+                # 401 说明密钥缺失/失效/填错：清掉缓存，下一轮重新从 hub 获取
+                if getattr(getattr(e, "response", None), "status_code", None) == 401:
+                    self._api_key = ""
+                    logger.warning("bt0 收到 401，下一轮将重新获取 API 密钥")
                 logger.warning(f"bt0 请求失败（第 {attempt + 1}/3 次）：{e}")
                 if attempt < 2:
                     time.sleep(0.5)

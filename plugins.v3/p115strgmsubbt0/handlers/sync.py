@@ -689,6 +689,15 @@ class SyncHandler:
                         file_name = matched_file.get('name', '')
                         logger.info(f"找到匹配文件：{file_name}")
 
+                        # 电影订阅不能误收剧集分集文件：历史故障中 PanSou 兜底把剧版
+                        # 《天才枪手》S01E11 单集当成 2017 电影转存，并把订阅误判为完成。
+                        if re.search(
+                            r'(?i)[Ss]\d{1,2}[Ee]\d{1,4}|第\s*\d{1,4}\s*集|\[\s*全\s*\d+\s*集\s*\]',
+                            file_name
+                        ):
+                            logger.warning(f"电影订阅命中剧集分集文件，跳过以防误转存：{file_name}")
+                            continue
+
                         # 计算当前文件的过滤分数和是否完美匹配
                         _, current_score = subscribe_filter.match(file_name) if subscribe_filter.has_filters() else (True, 0)
                         is_perfect = subscribe_filter.is_perfect_match(file_name) if subscribe_filter.has_filters() else True
@@ -883,17 +892,52 @@ class SyncHandler:
             missing_episodes = []
             mediakey = mediainfo.tmdb_id or mediainfo.douban_id
 
-            if no_exists and mediakey:
-                season_info = no_exists.get(mediakey, {})
-                not_exist_info = season_info.get(season)
+            if no_exists:
+                season_info = no_exists.get(mediakey, {}) if mediakey else {}
+                not_exist_info = season_info.get(season) if isinstance(season_info, dict) else None
+                # mediakey 可能因 TMDB/豆瓣 ID 口径不一致而取不到，遍历所有 key 找同季的缺失信息
+                if not not_exist_info:
+                    for _key, _seasons in no_exists.items():
+                        if isinstance(_seasons, dict) and _seasons.get(season):
+                            not_exist_info = _seasons.get(season)
+                            logger.warning(
+                                f"{mediainfo.title_year} S{season} 媒体库缺失信息 key 不匹配"
+                                f"（{mediakey} -> {_key}），已按季号兼容读取"
+                            )
+                            break
                 if not_exist_info:
                     missing_episodes = not_exist_info.episodes or []
                     if not missing_episodes and not_exist_info.total_episode:
                         start_ep = not_exist_info.start_episode or 1
                         missing_episodes = list(range(start_ep, not_exist_info.total_episode + 1))
 
+            # 兜底：剧集尚未入库媒体库、或季号/媒体 ID 对不上时 get_no_exists_info 会返回空。
+            # 若此时直接返回，剧集订阅会永远空转（历史故障：长期只打印"没有缺失剧集信息"）。
+            # 以订阅自身记录的总集数/缺失集数生成候选集，后续再由网盘已存在集数过滤。
             if not missing_episodes:
-                logger.info(f"{mediainfo.title_year} S{season} 没有缺失剧集信息")
+                try:
+                    total_ep = int(subscribe.total_episode or 0)
+                    start_ep = int(subscribe.start_episode or 1)
+                    lack_ep = int(subscribe.lack_episode or 0)
+                except (TypeError, ValueError):
+                    total_ep, start_ep, lack_ep = 0, 1, 0
+                if total_ep > 0:
+                    candidates = list(range(start_ep, total_ep + 1))
+                    # 连续剧通常缺末尾若干集：用 lack_episode 收窄范围，避免整季重复搜索
+                    if 0 < lack_ep < len(candidates):
+                        candidates = candidates[-lack_ep:]
+                    missing_episodes = candidates
+                    logger.warning(
+                        f"{mediainfo.title_year} S{season} 媒体库未返回缺失集信息，"
+                        f"按订阅记录兜底生成 {len(missing_episodes)} 集"
+                        f"（总集数={total_ep}，缺失集数={lack_ep}，起始={start_ep}）"
+                    )
+
+            if not missing_episodes:
+                logger.warning(
+                    f"{mediainfo.title_year} S{season} 仍无缺失剧集信息：媒体库未返回且订阅未设置总集数，"
+                    f"建议补全订阅的「总集数」后重试"
+                )
                 return transferred_count
 
             # 过滤掉小于开始集数的剧集

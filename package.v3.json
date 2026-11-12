@@ -3,13 +3,14 @@
     "name": "115网盘追更·Bt0磁力版",
     "description": "结合MoviePilot订阅功能，自动搜索115网盘资源并转存缺失的电影和剧集（内置bt0磁力搜索源）。",
     "labels": "下载,115",
-    "version": "1.7.16",
+    "version": "1.7.17",
     "release": true,
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Frontend/refs/heads/v2/src/assets/images/misc/u115.png",
     "author": "metack567-stack",
     "system_version": ">=3.0.0",
     "level": 1,
     "history": {
+      "v1.7.17": "- 修复 bt0 全量 401：未显式配置密钥时自动从 2bt0-hub /api/apikey 获取，401 自动重取；- 修复剧集订阅长期空转：媒体库缺失信息 key 不匹配时按季号兼容读取，再以订阅总集数/缺失集数兜底；- 修复接管态补锁死循环与日志刷屏（按实际 115 站点 ID 判断）；- 修复本清单 history 缺逗号导致 JSON 解析失败、V3 无法检测插件更新",
       "v1.7.11": "- 修正 1.7.10 判据的反噬：file_id 失联有两种可能（①文件真被删 ②任务已被网盘整理搬走——move 后旧 file_id 必然失效，90008 实证）。单独用它判失败会把「已整理成功」的条目误判成失败并触发重复下载，现在必须叠加「超 24 小时仍未入库」才判失败。",
       "v1.7.10": "- 修坏任务误判：115 会留下「status=2 但文件已被清掉」的任务，现在提交被拒时会按 file_id 核查文件是否还在（cid 回读对照法），丢失即判失败去换资源；离线回查同样加此判据，另加 24 小时未入库/未完成的超时兜底；修正 status=1 被当失败（实测 1=刚提交/进行中）",
       "v1.7.9": "- 清掉 4 处 MoviePilot V3 残留（实测自愈清理报 no such column: tmdbid）：3 条原生 SQL 改走 media_source/media_id（自愈清理用 CASE 包一层保持下游变量与 STRM 目录名不变），1 处 subscribe.tmdbid 属性读取改兼容函数",
@@ -18,8 +19,8 @@
       "v1.7.5": "- 修复 MP V3 兼容：Subscribe 已无 tmdbid/doubanid 字段，改用 media_source+media_id（新增 utils/v3_compat.py，替换全部老字段访问）\n- 修复 SubscribeOper().list_by_tmdbid 在 V3 被移除导致的 AttributeError（改本地过滤）",
       "v1.7.6": "- 修复 V3 的 recognize_media 签名变化（不再接受 tmdbid/doubanid，改用 media_source+media_id）",
       "v1.7.7": "- bt0 精确匹配改用新版 2bt0-hub 通用接口（/api/items?source=local + /api/movie/{id}），不再依赖已移除的 /api/resolve 本地补丁",
-      "v1.7.16": "- bt0 磁力按画质择优（/api/magnets quality 字段排序）+ 订阅 quality/resolution 透传加权"
-      "v1.7.15": "- bt0 接入对外 API 密钥（X-API-Key，bt0 已强制鉴权）；resolve() 改用 /api/magnets 一次取全片磁力"
+      "v1.7.16": "- bt0 磁力按画质择优（/api/magnets quality 字段排序）+ 订阅 quality/resolution 透传加权",
+      "v1.7.15": "- bt0 接入对外 API 密钥（X-API-Key，bt0 已强制鉴权）；resolve() 改用 /api/magnets 一次取全片磁力",
       "v1.7.14": "- get_page 触发离线回查：打开插件页面即把 115 已完成/失败的离线任务状态更新回 history（复用 p115strmhelper 120s 缓存，30 分钟防抖，仅处理提交超 30 分钟条目，有更新才写回）",
       "v1.7.13": "- TransferExcludeWords 自动补丁（广告文件排除词）",
       "v1.7.12": "- 已入库即跳过（改用 MP 整理历史，不再依赖会被清空的插件转存记录）\n- 115 离线成功后补写 MP 下载历史（订阅可及时判定完成）"

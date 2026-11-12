@@ -50,7 +50,7 @@ class P115StrgmSubBt0(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/cloud.png"
     # 插件版本
-    plugin_version = "1.7.16"
+    plugin_version = "1.7.17"
     # 插件作者
     plugin_author = "metack567-stack"
     # 作者主页
@@ -589,19 +589,57 @@ class P115StrgmSubBt0(_PluginBase):
                     # 都不在（缓冲期 17:30~18:00）→ 保持现有状态不变
                     logger.debug("当前不在任何管控时段，保持现有状态不变")
 
+    @staticmethod
+    def _sites_are_only_115(sites, site_id_115: int) -> bool:
+        """判断订阅 sites 是否已锁定为仅115。
+
+        兼容三种实际存储形态：list([-1])、JSON 字符串("[-1]" / "123")、逗号串("1,2")。
+        历史 bug：旧逻辑用 str(sites) != "[-1]" 判断，但写入端按 storage=str 写成
+        "123"，且站点表里 115网盘 可能有真实 id，导致判断永远成立 → 每 5 分钟重复补锁、
+        反复触发订阅变更事件并刷屏。这里改为按实际写入的站点 ID 比较。
+        """
+        if sites is None:
+            return False
+        if isinstance(sites, str):
+            raw = sites.strip()
+            try:
+                import json as _json
+                parsed = _json.loads(raw)
+                parts = parsed if isinstance(parsed, list) else [parsed]
+            except Exception:
+                parts = [p.strip() for p in raw.split(",") if p.strip() and p.strip() != "[]"]
+        elif isinstance(sites, (list, tuple)):
+            parts = list(sites)
+        else:
+            return False
+        try:
+            nums = [int(p) for p in parts]
+        except (TypeError, ValueError):
+            return False
+        return bool(nums) and (nums == [-1] or nums == [site_id_115])
+
     def _lock_new_subscribes_in_blocked(self):
         """
         在已处于屏蔽态时，检查并锁定新添加但未锁的订阅。
         解决：屏蔽态中添加新订阅后，on_subscribe_added 事件未生效时的兜底补锁。
         """
+        # MoviePilot V3 的 SubscribeOper.update 会忽略 sites 字段（实测写入后 DB 仍为 null），
+        # 导致「仅115」接管根本没生效，而补锁每 5 分钟重复写库并刷屏。
+        # 一旦回读确认写入未落库，就标记不支持并停止后续补锁，避免无效循环。
+        if getattr(self, "_sites_lock_unsupported", False):
+            return
         self._init_subscribe_handler()
         with SessionFactory() as _db:
             from app.db.subscribe_oper import SubscribeOper
+            try:
+                site_id_115 = int(self._ensure_115_site_id(_db))
+            except Exception:
+                site_id_115 = -1
             _unlocked = []
             for _s in (SubscribeOper(db=_db).list() or []):
                 if self._is_subscribe_excluded(_s.id):
                     continue
-                if str(getattr(_s, "sites", "[]")) != "[-1]":
+                if not self._sites_are_only_115(getattr(_s, "sites", None), site_id_115):
                     _unlocked.append(_s.id)
             if _unlocked:
                 logger.info(f"接管态补锁：发现 {len(_unlocked)} 个未锁订阅，正在锁定")
@@ -609,11 +647,39 @@ class P115StrgmSubBt0(_PluginBase):
                     if hasattr(self._subscribe_handler, "set_sites_for_subscribe_only_115"):
                         self._subscribe_handler.set_sites_for_subscribe_only_115(_sid)
                     else:
-                        site_id_115 = self._ensure_115_site_id(_db)
                         SubscribeOper(db=_db).update(_sid, {"sites": [site_id_115]})
-                logger.info(f"接管态补锁：已完成 {len(_unlocked)} 个订阅的锁定")
+                logger.info(f"接管态补锁：已尝试锁定 {len(_unlocked)} 个订阅，正在回读校验")
+                self._verify_sites_lock_persisted(_unlocked)
             else:
                 logger.debug("接管态补锁：所有非排除订阅已锁定")
+
+    def _verify_sites_lock_persisted(self, subscribe_ids: list):
+        """回读数据库确认 sites 真的写入；未落库则关闭后续补锁（只告警一次）。"""
+        try:
+            import sqlite3 as _sqlite3
+            import os as _os
+            # V3 容器内固定挂载 /config；优先用运行时配置，缺失时回落到默认路径
+            from app.core.config import settings as _settings
+            cfg = str(getattr(_settings, "CONFIG_PATH", None) or "").rstrip("/")
+            db_path = (cfg + "/user.db") if cfg else "/config/user.db"
+            if not _os.path.exists(db_path):
+                db_path = "/config/user.db"
+            conn = _sqlite3.connect(db_path, timeout=10)
+            placeholders = ",".join("?" * len(subscribe_ids))
+            rows = conn.execute(
+                f"SELECT sites FROM subscribe WHERE id IN ({placeholders})",
+                tuple(subscribe_ids),
+            ).fetchall()
+            conn.close()
+            empty = sum(1 for (v,) in rows if v is None or str(v).strip() in ("", "null", "[]"))
+            if rows and empty == len(rows):
+                self._sites_lock_unsupported = True
+                logger.warning(
+                    "接管态补锁：当前 MoviePilot 版本未持久化订阅 sites 字段，"
+                    "「仅115」接管实际不生效；已停止重复补锁以避免每 5 分钟刷屏，订阅站点保持原状"
+                )
+        except Exception as e:
+            logger.debug(f"接管态补锁回读校验失败（忽略）：{e}")
 
     def _apply_best_version_selected(self):
         """
@@ -2539,6 +2605,21 @@ class P115StrgmSubBt0(_PluginBase):
         if skipped_count:
             mode_label = "指定模式" if self._subscribe_filter_mode == "include" else "排除模式"
             logger.info(f"订阅过滤（{mode_label}）：本次跳过 {skipped_count} 个不在处理范围的订阅")
+
+        # 空跑/无新增也留痕：历史故障中执行记录只记成功转存，连续多日「共转存 0 个文件」
+        # 在 UI 上完全不可见、问题被掩盖。这里追加一条状态记录，便于直接从执行记录页发现异常。
+        if transferred_count == 0:
+            history.append({
+                "title": "本次同步无新增",
+                "year": "",
+                "type": "执行记录",
+                "status": "无新增",
+                "share_url": "",
+                "file_name": "未发现需要转存的新资源",
+                "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            })
+            if len(history) > 50:
+                history = history[-50:]
 
         self.save_data('history', history)
 

@@ -41,6 +41,20 @@ MoviePilot 自定义插件仓库，发布家庭 NAS 上自己维护的插件（�
 
 ---
 
+## 1.7.17 修复（2026-11-12，仅 plugins.v3）
+
+容器 moviepilot-v3 曾长期停留在 1.7.11，排查后一次性升级到 1.7.17（docker cp plugins.v3/p115strgmsubbt0/. moviepilot-v3:/app/app/plugins/p115strgmsubbt0/ + docker restart moviepilot-v3）。
+
+- **bt0 全量 401**：2bt0-hub 全站 API 强制 X-API-Key。clients/bt0.py 现在在配置 bt0_apikey 为空时自动从 hub /api/apikey 获取，收到 401 会清缓存重取；hub 密钥持久化在 /data，容器重建不变。
+- **剧集订阅长期空转**：handlers/sync.py 取 no_exists 用 mediainfo.tmdb_id，而 V3 返回的 key 是 tmdb:2288 格式，永远取不到，只打印「没有缺失剧集信息」。现在 mediakey 不匹配时按季号遍历兼容读取，仍为空再用订阅 total_episode/lack_episode 兜底。
+- **电影误收剧集单集**：分享文件名含 SxxEyy / 第N集 / [全N集] 时跳过，不再把剧版单集当电影转存并误判订阅完成。
+- **接管态补锁死循环**：旧判断 str(sites) != "[-1]"，而写入端按 storage 写成 "123"；更深层原因是 MP V3 的 SubscribeOper.update 会忽略 sites 字段、写入不落库，导致每 5 分钟重复补锁刷屏。现在改为按实际 115 站点 ID 判断 + 写入后回读校验，确认不落库则打一次 WARNING 并停止后续补锁（订阅站点保持原状，不改变行为）。如需让「仅115」接管真正生效，需改用原生 SQL 写 subscribe.sites，同时处理开放时段的站点恢复，避免锁死。
+- **执行记录看不见空跑**：transferred_count == 0 时追加一条「本次同步无新增」记录（最多保留 50 条）。
+- **package.v3.json 不是合法 JSON**：history 多个条目缺逗号，V3 插件市场读不到新版清单，也是容器长期停留旧版的原因之一，已修正并补齐 1.7.17 条目。
+- 另：系统通知渠道 telegram（TELEGRAM_CHAT_ID 指向 bot 自身）长期 403，已在 systemconfig.Notifications 中禁用，原值备份在 config/plugins_backup/Notifications-backup-*.json；企业微信/飞书等渠道不受影响。
+
+> 版本线说明：plugins.v2 仍停留在 1.7.11，本次只维护 V3 分支；改版本号只需同步 plugins.v3/.../__init__.py 的 plugin_version 与 package.v3.json 的 version 两处。
+
 ## V3 支持（2026-10-11 新增）
 
 NAS 上的 MoviePilot 已升级到 V3（容器名 `moviepilot-v3`，镜像 `jxxghp/moviepilot-v3`）。本仓库为此增加 V3 布局，两套清单并存、互不影响。
