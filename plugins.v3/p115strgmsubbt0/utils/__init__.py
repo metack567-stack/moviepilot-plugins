@@ -2,7 +2,14 @@
 工具模块
 包含文件匹配、通用工具等
 """
-from .file_matcher import FileMatcher, SubscribeFilter, looks_like_series
+from .file_matcher import (
+    FileMatcher,
+    SubscribeFilter,
+    looks_like_series,
+    media_title_names,
+    resource_belongs_to_media,
+    title_belongs_to_media,
+)
 from .tools import (
     download_so_file,
     get_hdhive_token_info,
@@ -17,6 +24,9 @@ __all__ = [
     "FileMatcher",
     "SubscribeFilter",
     "looks_like_series",
+    "media_title_names",
+    "resource_belongs_to_media",
+    "title_belongs_to_media",
     "download_so_file",
     "get_hdhive_token_info",
     "check_hdhive_cookie_valid",

@@ -11,7 +11,7 @@ from app.log import logger
 from app.schemas import MediaInfo
 from app.schemas.types import MediaType
 
-from ..utils import convert_nullbr_to_pansou_format, looks_like_series
+from ..utils import convert_nullbr_to_pansou_format, looks_like_series, resource_belongs_to_media
 
 
 class SearchHandler:
@@ -1054,6 +1054,8 @@ class SearchHandler:
 
             results = []
             dropped_series = 0
+            dropped_unrelated = 0
+            unrelated_titles = []
             for item in items:
                 magnet = (item.get("magnet") or "").strip()
                 if not magnet:
@@ -1068,6 +1070,17 @@ class SearchHandler:
                         continue
                     if looks_like_series(title):
                         dropped_series += 1
+                        continue
+                else:
+                    # 剧集订阅：bt0 关键词搜索极宽松（搜「侠客行 S01」会带回
+                    # 《权力交锋 Collision S01》这类无关剧），而下游择优只按
+                    # 「覆盖缺失集数最多」打分，无关资源反而更容易胜出并整包
+                    # 提交离线。这里按订阅的中文名/外文名做归属校验后硬拒。
+                    related, decidable = resource_belongs_to_media(title, mediainfo)
+                    if decidable and not related:
+                        dropped_unrelated += 1
+                        if len(unrelated_titles) < 5:
+                            unrelated_titles.append(title[:60])
                         continue
                 # 年份校验：标题含年份但非订阅年份 -> 剔除（防错配）
                 if year:
@@ -1084,6 +1097,12 @@ class SearchHandler:
                     "quality": item.get("quality", ""),
                     "episodes": self._bt0_client.parse_episodes(title, item.get("episodes", "")),
                 })
+
+            if dropped_unrelated:
+                logger.warning(
+                    f"bt0 关键词 '{keyword}'：{dropped_unrelated} 条资源与订阅《{mediainfo.title}》"
+                    f"标题不符，已剔除（示例：{' / '.join(unrelated_titles)}）"
+                )
 
             if results:
                 # 择优：画质降序优先（含订阅偏好加权），其次标题含订阅关键词排前（软排序，不剔除）

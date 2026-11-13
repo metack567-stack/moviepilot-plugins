@@ -40,6 +40,120 @@ def looks_like_series(title: str) -> bool:
     return bool(_SERIES_TITLE_RE.search(str(title)))
 
 
+# ---- 资源标题 ↔ 订阅影片的归属判断（剧集订阅防错配）----
+# 背景：bt0 的关键词搜索非常宽松，搜「侠客行 S01」会返回《权力交锋 Collision S01》
+# 这类完全无关的剧集；而剧集侧的磁力择优只按「覆盖缺失集数最多」打分，无关资源
+# 覆盖集数更多就会胜出并被整包提交离线（历史故障：侠客行订阅转存了《权力交锋》
+# 全 39 集，另有 2025 年《侠客行不通》S01E03~E15 被当成它入库）。
+# 因此在结果返回前必须校验资源标题是否真的属于该剧。
+_WORD_CHAR_RE = re.compile(r"[A-Za-z\u4e00-\u9fff]")
+_ASCII_TOKEN_RE = re.compile(r"[0-9A-Za-z]+")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _is_word_char(ch: str) -> bool:
+    """汉字/英文字母算「词内」，数字不算
+
+    数字在标题里通常表示年份、季号或集数（如「侠客行1985」「2017侠客行」），
+    属于分隔语义，当作边界处理，避免把这类合法标题误杀。
+    """
+    return bool(ch) and bool(_WORD_CHAR_RE.match(ch))
+
+
+def cjk_name_in_title(title: str, name: str) -> bool:
+    """中文名在资源标题中按「词边界」出现
+
+    必须带边界判断，否则「侠客行」会把《侠客行不通》当成自己。
+    """
+    if not title or not name:
+        return False
+    start = 0
+    while True:
+        pos = title.find(name, start)
+        if pos < 0:
+            return False
+        before = title[pos - 1] if pos > 0 else ""
+        after = title[pos + len(name)] if pos + len(name) < len(title) else ""
+        if not _is_word_char(before) and not _is_word_char(after):
+            return True
+        start = pos + 1
+
+
+def en_name_in_title(title: str, name: str) -> bool:
+    """英文名按 token 连续出现（忽略大小写与标点）
+
+    单词英文名要求长度 >= 4 且作为独立 token 出现，避免过短的词乱命中。
+    """
+    nt = _ASCII_TOKEN_RE.findall((name or "").lower())
+    if not nt:
+        return False
+    tt = _ASCII_TOKEN_RE.findall((title or "").lower())
+    if len(nt) == 1:
+        return len(nt[0]) >= 4 and nt[0] in tt
+    return any(tt[i:i + len(nt)] == nt for i in range(len(tt) - len(nt) + 1))
+
+
+def media_title_names(mediainfo) -> Tuple[List[str], List[str]]:
+    """从 MediaInfo 收集用于归属判断的中文名/英文名
+
+    :return: (中文名列表, 外文名列表)
+    """
+    cn: List[str] = []
+    en: List[str] = []
+
+    def _add(value):
+        v = str(value or "").strip()
+        if not v or v in cn or v in en:
+            return
+        (cn if _CJK_RE.search(v) else en).append(v)
+
+    _add(getattr(mediainfo, "title", ""))
+    _add(getattr(mediainfo, "en_title", ""))
+    _add(getattr(mediainfo, "original_title", ""))
+    for n in (getattr(mediainfo, "names", None) or []):
+        _add(n)
+    return cn, en
+
+
+def title_belongs_to_media(title: str, cn_names, en_names) -> bool:
+    """资源标题是否属于该影片（任一中文名/外文名命中即算）"""
+    title = str(title or "")
+    if not title:
+        return False
+    for n in cn_names or []:
+        n = str(n or "").strip()
+        if n and _CJK_RE.search(n) and cjk_name_in_title(title, n):
+            return True
+    for n in en_names or []:
+        n = str(n or "").strip()
+        if n and not _CJK_RE.search(n) and en_name_in_title(title, n):
+            return True
+    return False
+
+
+def resource_belongs_to_media(title: str, mediainfo) -> Tuple[bool, bool]:
+    """资源标题是否属于订阅影片
+
+    :return: (是否相关, 是否可判定)。无法判定时应放行，否则会把所有资源
+             误杀导致永久漏追。两类「无法判定」：
+             1) 订阅既无中文名也无外文名；
+             2) 资源标题纯英文而订阅没有外文名（或纯中文而订阅没有中文名），
+                即两边语言不重叠，比不出结果。
+    """
+    cn, en = media_title_names(mediainfo)
+    if not cn and not en:
+        return True, False
+    title = str(title or "")
+    if title_belongs_to_media(title, cn, en):
+        return True, True
+    title_is_cjk = bool(_CJK_RE.search(title))
+    if title_is_cjk and not cn:
+        return True, False
+    if not title_is_cjk and not en:
+        return True, False
+    return False, True
+
+
 class SubscribeFilter:
     """订阅过滤条件"""
 
