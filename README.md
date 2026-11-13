@@ -41,6 +41,21 @@ MoviePilot 自定义插件仓库，发布家庭 NAS 上自己维护的插件（�
 
 ---
 
+## 1.7.18 修复（2026-11-13，仅 plugins.v3）
+
+电影订阅被「同名剧集」污染的根因与修法（起因：订阅电影《欢迎来龙餐馆》，结果入库了 12 集日番《直至魔女消逝》）。
+
+- **bt0 精确匹配不做类型校验**：`clients/bt0.py::resolve()` 只校验「标题 + 年份」，命中后把该 `movie_id` 下的**全部磁力**都当电影资源返回，完全没有分集/季集判断。而 2bt0-hub 的 `category` 字段不可靠——实测该电影条目名下的磁力是 `欢迎来龙餐馆[共12部合集]...Once.Upon.a.Witchs.Death.S01.2025...`，`category` 却仍返回「电影」，所以靠 category 过滤无效。
+- **整包磁力绕过文件级校验**：1.7.17 只在「从磁力结果里挑单个文件」阶段拒绝 `SxxEyy`，但这条是整季合集磁力直接提交 115 离线 → 整包入库，压根没走到挑文件那一步。
+- **修法**：新增 `utils/file_matcher.py::looks_like_series()`，按强特征识别剧集资源（`S01E05`、裸季号 `S01`、`第N集`、`全N集`、`EP01`、`Season 1`；不把电影套装「共4部合集」算进去），在三个位置使用：
+  1. `handlers/search.py::_search_bt0()` 精确匹配路径（逐条磁力剔除，全被剔除则降级模糊搜索）
+  2. `handlers/search.py::_search_bt0()` 模糊搜索路径（与原有 category 判断并用）
+  3. `handlers/sync.py::process_movie_subscribe()` 提交前兜底（覆盖 PanSou 等分享链接源）
+- 剔除时均打 WARNING 说明原因与条数，便于回溯；剧集订阅完全不受影响。
+- 已入库的错片需人工处理：《直至魔女消逝 (2025)》是电影订阅带进来的错误剧集，115 影视库与 Emby 中的条目需自行清理。
+
+---
+
 ## 1.7.17 修复（2026-11-12，仅 plugins.v3）
 
 容器 moviepilot-v3 曾长期停留在 1.7.11，排查后一次性升级到 1.7.17（docker cp plugins.v3/p115strgmsubbt0/. moviepilot-v3:/app/app/plugins/p115strgmsubbt0/ + docker restart moviepilot-v3）。

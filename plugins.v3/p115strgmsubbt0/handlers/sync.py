@@ -22,7 +22,7 @@ from app.schemas import MediaInfo
 from app.schemas.types import MediaType, NotificationType, TorrentStatus
 from app.utils.string import StringUtils
 
-from ..utils import FileMatcher, SubscribeFilter
+from ..utils import FileMatcher, SubscribeFilter, looks_like_series
 from ..utils.v3_compat import sub_tmdbid, sub_doubanid, list_subs_by_tmdbid, recognize_kwargs
 from .search import SearchHandler
 from .subscribe import SubscribeHandler
@@ -624,6 +624,13 @@ class SyncHandler:
 
                 share_url = resource.get("url", "")
                 resource_title = resource.get("title", "")
+
+                # 电影订阅兜底：拒绝带分集/季集特征的资源（bt0 的 category 字段不可靠，
+                # PanSou 等源也可能返回整季合集）。此前「欢迎来龙餐馆」(电影) 被塞进
+                # 《直至魔女消逝》S01 全 12 集，整季入库成剧集，就是漏在这里。
+                if looks_like_series(resource_title):
+                    logger.warning(f"电影 {subscribe.name} 跳过疑似剧集资源（含分集/季集特征）：{resource_title}")
+                    continue
 
                 # 检查是否是刚搜索出尚未真正解锁的延期解锁 HDHive 资源
                 if resource.get("need_unlock") and not share_url:

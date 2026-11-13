@@ -11,7 +11,7 @@ from app.log import logger
 from app.schemas import MediaInfo
 from app.schemas.types import MediaType
 
-from ..utils import convert_nullbr_to_pansou_format
+from ..utils import convert_nullbr_to_pansou_format, looks_like_series
 
 
 class SearchHandler:
@@ -971,13 +971,21 @@ class SearchHandler:
             movie = resolved.get("movie") or {}
             magnets = resolved.get("magnets") or []
             results = []
+            dropped_series = 0
             for item in magnets:
                 magnet = (item.get("magnet") or "").strip()
                 if not magnet:
                     continue
+                title = item.get("title", "") or movie.get("title", "") or mediainfo.title
+                # 电影订阅：精确匹配结果同样可能是剧集（hub category 字段不可靠，
+                # 实测「欢迎来龙餐馆」电影条目下挂的是《直至魔女消逝》S01 全12集），
+                # 这里按标题分集特征硬拒，防止整包剧集被当电影转存后入库成剧集。
+                if media_type == MediaType.MOVIE and looks_like_series(title):
+                    dropped_series += 1
+                    continue
                 results.append({
                     "url": magnet,
-                    "title": item.get("title", "") or movie.get("title", "") or mediainfo.title,
+                    "title": title,
                     "update_time": item.get("published_at", ""),
                     "source": "bt0",
                     "is_magnet": True,
@@ -985,6 +993,11 @@ class SearchHandler:
                     "quality": item.get("quality", ""),
                     "episodes": self._bt0_client.parse_episodes(item.get("title", ""), movie.get("episodes", "")),
                 })
+            if dropped_series:
+                logger.warning(
+                    f"bt0 精确匹配：{movie.get('title')} 名下 {dropped_series} 条磁力带分集/季集特征，"
+                    f"按剧集资源剔除（电影订阅只收正片）"
+                )
             if results:
                 # 择优：按画质（/api/magnets quality 字段，缺失回退标题）降序，命中订阅偏好的优先
                 results.sort(
@@ -1040,15 +1053,21 @@ class SearchHandler:
                 continue
 
             results = []
+            dropped_series = 0
             for item in items:
                 magnet = (item.get("magnet") or "").strip()
                 if not magnet:
                     continue
                 title = (item.get("title") or "").strip()
                 # 电视剧剔除：电影订阅不要剧集/合集磁力
+                # ① category 字段（不可靠，仅作辅助）② 标题分集特征（主判据）
                 if media_type == MediaType.MOVIE:
                     cat = (item.get("category") or "").strip()
                     if any(k in cat for k in ("剧", "电视", "剧集")):
+                        dropped_series += 1
+                        continue
+                    if looks_like_series(title):
+                        dropped_series += 1
                         continue
                 # 年份校验：标题含年份但非订阅年份 -> 剔除（防错配）
                 if year:
@@ -1077,6 +1096,10 @@ class SearchHandler:
                     reverse=True
                 )
                 logger.info(f"bt0 关键词 '{keyword}' 搜索到 {len(results)} 条磁力资源")
+                if dropped_series:
+                    logger.warning(
+                        f"bt0 关键词 '{keyword}' 另有 {dropped_series} 条为剧集/分集资源，已按电影订阅剔除"
+                    )
                 return results
             else:
                 logger.info(f"bt0 关键词 '{keyword}' 有 {len(items)} 条结果但磁力详情未抓取或过滤后为空，尝试下一个关键词")

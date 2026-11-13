@@ -10,6 +10,36 @@ from app.schemas import MediaInfo
 from app.log import logger
 
 
+# 分集/季集特征（用于「电影订阅不要剧集资源」的硬判据）
+# 背景：2bt0-hub 的 category 字段不可靠——实测电影条目「欢迎来龙餐馆」下挂的磁力其实是
+# 《直至魔女消逝》S01 全 12 集，category 仍返回「电影」。因此不能只靠 category 判类型，
+# 必须在标题层面识别分集特征，否则整包磁力提交后会让整季剧集被 MP 当剧集入库。
+# 注意：只认「季号 S01 / 分集 S01E05 / 第N集 / 全N集 / EP01 / Season 1」这类强特征，
+# 不把「共4部合集」算进去（电影套装合集是合法电影资源）。
+_SERIES_TITLE_RE = re.compile(
+    r"(?<![0-9A-Za-z])(?:S\d{1,2}E\d{1,4}|S\d{1,2}(?![0-9A-Za-z])|EP?\d{1,4}(?![0-9A-Za-z]))"
+    r"|第\s*\d{1,3}\s*[-~—至到]\s*\d{1,3}\s*[集话期]"
+    r"|第\s*\d{1,3}\s*[集话期]"
+    r"|[全共]\s*\d{1,3}\s*集"
+    r"|\d{1,3}\s*集全"
+    r"|Season\s*\d{1,2}"
+    r"|Complete\s+Series",
+    re.IGNORECASE,
+)
+
+
+def looks_like_series(title: str) -> bool:
+    """
+    判断资源标题是否带分集/季集特征（即「这是一部剧，不是电影」）
+
+    :param title: 资源标题（磁力名/分享名）
+    :return: True 表示疑似剧集资源
+    """
+    if not title:
+        return False
+    return bool(_SERIES_TITLE_RE.search(str(title)))
+
+
 class SubscribeFilter:
     """订阅过滤条件"""
 
